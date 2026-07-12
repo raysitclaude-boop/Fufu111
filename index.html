@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FUJI Field</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f1720">
+<style>
+:root{--bg:#0f1720;--card:#1a2530;--line:#2a3947;--tx:#e8eef4;--dim:#8ba0b3;--acc:#4fc3f7;--ok:#66bb6a;--warn:#ffa726;--bad:#ef5350}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font:15px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif;padding-bottom:64px}
+header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 14px;z-index:5;display:flex;justify-content:space-between;align-items:center}
+h1{font-size:17px}
+#asof{font-size:11px;color:var(--dim)}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);z-index:5}
+nav button{flex:1;background:none;border:0;color:var(--dim);padding:9px 2px 7px;font-size:11px;cursor:pointer}
+nav button.on{color:var(--acc)}
+nav button span{display:block;font-size:19px}
+main{padding:12px 14px;max-width:760px;margin:0 auto}
+input[type=search],input[type=password]{width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-size:15px;outline:none}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0}
+.card h3{font-size:15px;margin-bottom:3px}
+.dim{color:var(--dim);font-size:12.5px}
+.tag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--line);color:var(--dim);margin:2px 3px 0 0}
+.tag.ok{color:var(--ok);border-color:var(--ok)}.tag.bad{color:var(--bad);border-color:var(--bad)}.tag.warn{color:var(--warn);border-color:var(--warn)}
+.row{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.click{cursor:pointer}
+.back{color:var(--acc);cursor:pointer;font-size:13px;margin-bottom:8px;display:inline-block}
+.sys{border-left:3px solid var(--acc);padding-left:10px;margin:14px 0 4px;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0}
+td,th{border:1px solid var(--line);padding:4px 7px;text-align:left}
+.md b,.md strong{color:var(--acc)}
+.md{white-space:pre-wrap;font-size:14px}
+#gate{position:fixed;inset:0;background:var(--bg);z-index:50;display:flex;flex-direction:column;justify-content:center;padding:28px;gap:12px}
+#gate h2{text-align:center}#gate p{color:var(--dim);text-align:center;font-size:13px}
+#gate button{padding:12px;border-radius:10px;border:0;background:var(--acc);color:#00222f;font-weight:700;font-size:15px;cursor:pointer}
+label.rem{display:flex;gap:8px;color:var(--dim);font-size:13px;align-items:center}
+.err{color:var(--bad);text-align:center;font-size:13px;min-height:18px}
+.hint{font-size:12px;color:var(--dim);margin-top:4px}
+</style>
+</head>
+<body>
+<div id="gate">
+  <h2>🧰 FUJI Field</h2>
+  <p>Enter the team password to unlock the offline data.</p>
+  <input type="password" id="pw" placeholder="Password" autocomplete="current-password">
+  <label class="rem"><input type="checkbox" id="rem"> Remember on this device</label>
+  <div class="err" id="gerr"></div>
+  <button onclick="unlock()">Unlock</button>
+</div>
+<header><h1 id="ttl">🧰 FUJI Field</h1><div id="asof"></div></header>
+<main id="view"></main>
+<nav>
+  <button id="nb-sites" onclick="go('sites')"><span>🏥</span>Sites</button>
+  <button id="nb-serial" onclick="go('serial')"><span>🔍</span>Serial</button>
+  <button id="nb-fix" onclick="go('fix')"><span>🧩</span>Troubleshoot</button>
+  <button id="nb-hist" onclick="go('hist')"><span>📋</span>History</button>
+</nav>
+<script>
+let DB=null, route={p:'sites'}, PREV=null;
+function goBack(){ if(PREV){const t=PREV;PREV=null;go(t.p,t.arg)} else go('serial'); }
+const $=id=>document.getElementById(id), V=()=>$('view');
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const md=s=>esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^\|(.+)\|$/gm,r=>'<tr>'+r.split('|').slice(1,-1).map(c=>'<td>'+c.trim()+'</td>').join('')+'</tr>').replace(/(<tr>[\s\S]+?<\/tr>\n?)+/g,m=>'<table>'+m+'</table>');
+
+// ---------- crypto gate ----------
+async function deriveKey(pw,salt){
+  const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:150000,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['decrypt']);
+}
+async function unlock(){
+  $('gerr').textContent='';
+  try{
+    const pw=$('pw').value;
+    const buf=await (await fetch('data.enc')).arrayBuffer();
+    const b=new Uint8Array(buf), salt=b.slice(0,16), iv=b.slice(16,28), ct=b.slice(28);
+    const key=await deriveKey(pw,salt);
+    const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv},key,ct);
+    DB=JSON.parse(new TextDecoder().decode(pt));
+    if($('rem').checked) localStorage.setItem('fw_pw',pw);
+    boot();
+  }catch(e){ $('gerr').textContent='Wrong password (or data not reachable).'; }
+}
+async function tryRemembered(){
+  const pw=localStorage.getItem('fw_pw');
+  if(!pw) return;
+  $('pw').value=pw; $('rem').checked=true;
+  await unlock();
+}
+function boot(){
+  $('gate').style.display='none';
+  $('asof').textContent='Data: '+DB.asof;
+  go('sites');
+}
+
+// ---------- helpers ----------
+const activeItems=()=>DB.items.filter(i=>i.status!=='Retired');
+function statusTag(s){const c=s==='Active'?'ok':(s==='Retired'?'bad':'warn');return `<span class="tag ${c}">${esc(s||'?')}</span>`}
+function itemLine(i,showSite){
+  return `<div class="card click" onclick="go('item',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">
+    <div class="row"><h3>${esc(i.sn)}</h3>${statusTag(i.status)}</div>
+    <div class="dim">${esc(i.model||i.type||'')} ${i.sysno?('· <b style=color:var(--acc)>'+esc(i.sysno)+'</b>'):''} ${i.loc?('· '+esc(i.loc)):''}</div>
+    ${showSite?`<div class="dim">${esc(i.site||'(no site)')}</div>`:''}
+  </div>`;
+}
+function svcLine(s){
+  return `<div class="card"><div class="row"><h3>${esc(s.l2||s.sym[0]||'Service')}</h3><span class="dim">${esc(s.d)}</span></div>
+  <div class="dim">${esc(s.site)} · ${esc((s.mach||[]).join(', '))} · ${esc((s.sn||[]).join(', '))}</div>
+  ${s.sym&&s.sym.length?`<div class="dim">Symptoms: ${esc(s.sym.join('; '))}</div>`:''}
+  ${s.act?`<div style="margin-top:4px">${esc(s.act)}</div>`:''}
+  ${s.parts&&s.parts.length?`<div class="hint">Parts: ${esc(s.parts.join('; '))}</div>`:''}
+  <div style="margin-top:3px">${statusTag(s.st)}</div></div>`;
+}
+
+// ---------- screens ----------
+function go(p,arg){ if(p==='item')PREV=route; route={p,arg}; render(); window.scrollTo(0,0); }
+function render(){
+  ['sites','serial','fix','hist'].forEach(k=>$('nb-'+k)?.classList.toggle('on',route.p===k||{item:'serial',site:'sites',card:'fix'}[route.p]===k));
+  ({sites,serial,fix,hist,item,site,card})[route.p](route.arg);
+}
+function sites(){
+  const sset={}; activeItems().forEach(i=>{const s=i.site||'(no site)';(sset[s]=sset[s]||[]).push(i)});
+  const names=Object.keys(sset).sort();
+  V().innerHTML=`<input type=search id=q placeholder="Search ${names.length} sites…" oninput="filterSites()">
+   <div id=list>${names.map(n=>siteRow(n,sset[n].length)).join('')}</div>`;
+}
+function siteRow(n,c){return `<div class="card click" onclick="go('site',${JSON.stringify(n).replace(/"/g,'&quot;')})"><div class="row"><h3>${esc(n)}</h3><span class="dim">${c} items</span></div></div>`}
+function filterSites(){
+  const q=$('q').value.toLowerCase(), sset={};
+  activeItems().forEach(i=>{const s=i.site||'(no site)';(sset[s]=sset[s]||[]).push(i)});
+  $('list').innerHTML=Object.keys(sset).sort().filter(n=>n.toLowerCase().includes(q)).map(n=>siteRow(n,sset[n].length)).join('');
+}
+function site(name){
+  const items=DB.items.filter(i=>(i.site||'(no site)')===name);
+  const act=items.filter(i=>i.status!=='Retired'), ret=items.filter(i=>i.status==='Retired');
+  const bySys={}; act.forEach(i=>{const k=i.sysno||'— no system # —';(bySys[k]=bySys[k]||[]).push(i)});
+  const keys=Object.keys(bySys).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  V().innerHTML=`<span class="back" onclick="go('sites')">← Sites</span><h2>${esc(name)}</h2>
+   <div class="dim">${act.length} active items · ${ret.length} retired</div>
+   ${keys.map(k=>`<div class="sys">${esc(k)}</div>`+bySys[k].map(i=>itemLine(i,false)).join('')).join('')}
+   ${ret.length?`<div class="sys" style="border-color:var(--bad)">Retired / replaced</div>`+ret.map(i=>itemLine(i,false)).join(''):''}`;
+}
+function serial(){
+  V().innerHTML=`<input type=search id=q placeholder="Type any part of a serial number…" oninput="serialSearch()"><div id=list class=dim style="margin-top:10px">Search across ${DB.items.length} items. The serial on the unit label is authoritative — report mismatches.</div>`;
+}
+function serialSearch(){
+  const q=$('q').value.trim().toUpperCase();
+  if(q.length<3){$('list').innerHTML='<div class=dim style=margin-top:10px>Type at least 3 characters.</div>';return}
+  const hits=DB.items.filter(i=>i.sn.toUpperCase().includes(q)).slice(0,30);
+  $('list').innerHTML=hits.length?hits.map(i=>itemLine(i,true)).join(''):'<div class=dim style=margin-top:10px>No match. Check 1↔I and 0↔O — typos exist. If genuinely new, log it for the Item Master.</div>';
+}
+function item(sn){
+  const i=DB.items.find(x=>x.sn===sn); if(!i){go('serial');return}
+  const set=DB.items.filter(x=>x.site===i.site&&x.sysno&&i.sysno&&x.sysno===i.sysno&&x.sn!==sn&&x.status!=='Retired');
+  const hist=DB.svc.filter(s=>(s.sn||[]).some(x=>x.toUpperCase()===sn.toUpperCase())).sort((a,b)=>b.d.localeCompare(a.d));
+  V().innerHTML=`<span class="back" onclick="goBack()">← Back</span>
+   <div class="card"><div class="row"><h3>${esc(i.sn)}</h3>${statusTag(i.status)}</div>
+   <div>${esc(i.title||'')}</div>
+   <div class="dim">${esc(i.model||'')} · ${esc(i.type||'')} ${i.sysno?('· System <b style=color:var(--acc)>'+esc(i.sysno)+'</b>'):''}</div>
+   <div class="dim">${esc(i.site||'')} ${i.loc?('· '+esc(i.loc)):''}</div>${i.addr?`<div class="hint">${esc(i.addr)}</div>`:''}</div>
+   ${set.length?`<div class="sys">Same system set (${esc(i.sysno)})</div>`+set.map(x=>itemLine(x,false)).join(''):''}
+   <div class="sys">Service history (${hist.length})</div>
+   ${hist.length?hist.map(svcLine).join(''):'<div class=dim>No CM records reference this serial.</div>'}`;
+}
+function fix(){
+  V().innerHTML=`<input type=search id=q placeholder="Symptom, error code, machine… e.g. 'A9', 'artifact', 'cannot charge'" oninput="fixSearch()">
+   <div id=list>${DB.cards.map(cardRow).join('')}</div>`;
+}
+function cardRow(c){return `<div class="card click" onclick="go('card','${c.id}')"><div class="row"><h3>${esc(c.title)}</h3><span class="tag">${esc(c.cat)}</span></div><div class="dim">${esc(c.machines.join(', '))}</div></div>`}
+function fixSearch(){
+  const q=$('q').value.toLowerCase();
+  let out=DB.cards.filter(c=>(c.title+' '+c.keywords+' '+c.content).toLowerCase().includes(q)).map(cardRow).join('');
+  if(q.length>=3){
+    const rec=DB.svc.filter(s=>((s.sym||[]).join(' ')+' '+(s.err||[]).join(' ')+' '+s.act+' '+s.l2).toLowerCase().includes(q)).slice(0,15);
+    if(rec.length)out+=`<div class="sys">Matching past cases (${rec.length}${rec.length===15?'+':''})</div>`+rec.map(svcLine).join('');
+  }
+  $('list').innerHTML=out||'<div class=dim style=margin-top:10px>No card matches — try the past-case search with 3+ characters, or check the SOP hub in Notion.</div>';
+}
+function card(id){
+  const c=DB.cards.find(x=>x.id===id); if(!c){go('fix');return}
+  V().innerHTML=`<span class="back" onclick="go('fix')">← Troubleshoot</span>
+  <h2>🧩 ${esc(c.title)}</h2><div class="dim" style="margin:4px 0 10px">${esc(c.machines.join(', '))} · AI draft — verify against SOP; report gaps to R</div>
+  <div class="card md">${md(c.content)}</div>`;
+}
+function hist(){
+  V().innerHTML=`<input type=search id=q placeholder="Filter by site / L2 / serial…" oninput="histSearch()"><div id=list></div>`;
+  histSearch();
+}
+function histSearch(){
+  const q=($('q')?.value||'').toLowerCase();
+  const rec=DB.svc.filter(s=>!q||(s.site+' '+s.l2+' '+(s.sn||[]).join(' ')+' '+(s.sym||[]).join(' ')).toLowerCase().includes(q))
+    .sort((a,b)=>b.d.localeCompare(a.d)).slice(0,50);
+  $('list').innerHTML=rec.map(svcLine).join('')+`<div class="hint">Showing latest ${rec.length}. Full records live in Notion.</div>`;
+}
+
+// ---------- init ----------
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+tryRemembered();
+</script>
+</body>
+</html>
