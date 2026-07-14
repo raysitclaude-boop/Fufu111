@@ -5,7 +5,7 @@ history, troubleshooting (symptoms + error-code index + common procedures), part
 team Analysis screen. Data comes from Notion (single source of truth) as an **encrypted
 snapshot** (`data.enc`). Current snapshot: **2026-07-14** (455 items · 1,400 CM records ·
 11 cards · 104 parts · 155 PM rows · 3 error-code machines / 357 codes · 5 procedures),
-password `fuji-field-2026` — **change it before rollout** (rebuild with your own FIELD_PW).
+— **change it before rollout** (rebuild with your own FIELD_PW).
 
 ## What changed in v3
 - **Sites/Field sorting fixed.** One canonical cluster per site now, so HA hospitals never
