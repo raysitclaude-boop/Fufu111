@@ -7,7 +7,7 @@
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f1720">
 <style>
-:root{--bg:#0f1720;--card:#1a2530;--line:#2a3947;--tx:#e8eef4;--dim:#8ba0b3;--acc:#4fc3f7;--ok:#66bb6a;--warn:#ffa726;--bad:#ef5350}
+:root{--bg:#0f1720;--card:#1a2530;--line:#2a3947;--tx:#e8eef4;--dim:#8ba0b3;--acc:#4fc3f7;--ok:#66bb6a;--warn:#ffa726;--bad:#ef5350;--solo:#2a78d6;--collab:#c3c2b7;--g2:#34d17a}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--tx);font:15px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif;padding-bottom:64px}
 header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 14px;z-index:5;display:flex;justify-content:space-between;align-items:center}
@@ -17,7 +17,7 @@ nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);b
 nav button{flex:1;background:none;border:0;color:var(--dim);padding:8px 0 6px;font-size:10px;cursor:pointer}
 nav button.on{color:var(--acc)}
 nav button span{display:block;font-size:18px}
-main{padding:12px 14px;max-width:760px;margin:0 auto}
+main{padding:12px 14px;max-width:820px;margin:0 auto}
 input[type=search],input[type=password]{width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-size:15px;outline:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0}
 .card h3{font-size:15px;margin-bottom:3px}
@@ -31,17 +31,48 @@ input[type=search],input[type=password]{width:100%;padding:11px 13px;border-radi
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 2px}
 .chip{padding:4px 12px;border-radius:99px;border:1px solid var(--line);background:none;color:var(--dim);font-size:12.5px;cursor:pointer}
 .chip.on{color:var(--acc);border-color:var(--acc)}
+.subtabs{display:flex;gap:6px;margin:8px 0 10px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px}
+.subtabs button{flex:1;padding:8px 4px;border:0;border-radius:7px;background:none;color:var(--dim);font-size:12.5px;font-weight:600;cursor:pointer}
+.subtabs button.on{background:var(--bg);color:var(--acc)}
 table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0}
-td,th{border:1px solid var(--line);padding:4px 6px;text-align:left}
+td,th{border:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
 th{color:var(--dim);font-weight:600}
+.md{font-size:14px}
+.md h2{font-size:15px;margin:14px 0 4px;color:var(--acc)}
+.md h3{font-size:13.5px;margin:11px 0 3px;color:var(--tx)}
+.md p{margin:5px 0}
+.md ul{margin:5px 0 5px 18px}.md li{margin:2px 0}
+.md ol{margin:5px 0 5px 20px}
+.md code{background:#0b1118;border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:12.5px;color:var(--g2);font-family:ui-monospace,Menlo,monospace}
 .md b,.md strong{color:var(--acc)}
-.md{white-space:pre-wrap;font-size:14px}
+.md table{margin:8px 0}
 #gate{position:fixed;inset:0;background:var(--bg);z-index:50;display:flex;flex-direction:column;justify-content:center;padding:28px;gap:12px}
 #gate h2{text-align:center}#gate p{color:var(--dim);text-align:center;font-size:13px}
 #gate button{padding:12px;border-radius:10px;border:0;background:var(--acc);color:#00222f;font-weight:700;font-size:15px;cursor:pointer}
 label.rem{display:flex;gap:8px;color:var(--dim);font-size:13px;align-items:center}
 .err{color:var(--bad);text-align:center;font-size:13px;min-height:18px}
 .hint{font-size:12px;color:var(--dim);margin-top:4px}
+.kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:10px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.kpi .n{font-size:26px;font-weight:800;line-height:1;color:var(--acc)}
+.kpi .n.g{color:var(--g2)}.kpi .n.a{color:var(--warn)}
+.kpi .l{margin-top:6px;font-size:11.5px;color:var(--tx)}
+.legend{display:flex;gap:16px;font-size:11.5px;color:var(--dim);margin:2px 0 6px}
+.legend span{display:flex;align-items:center;gap:5px}
+.dot{width:10px;height:10px;border-radius:2px;display:inline-block}
+.bar-row{display:grid;grid-template-columns:74px 1fr 42px;gap:8px;align-items:center;margin:5px 0;font-size:12px}
+.bar-track{background:#0b1118;border-radius:4px;height:16px;display:flex;overflow:hidden;border:1px solid var(--line)}
+.bar-solo{background:var(--solo);height:100%}
+.bar-collab{background:var(--collab);height:100%}
+.bar-pct{text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+.insight{margin-top:10px;background:#141c24;border-left:3px solid var(--g2);border-radius:8px;padding:11px 13px;color:var(--dim);font-size:13px;line-height:1.55}
+.insight b{color:var(--tx)}
+details.proc{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;padding:0}
+details.proc>summary{padding:12px 14px;cursor:pointer;list-style:none;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:8px}
+details.proc>summary::-webkit-details-marker{display:none}
+details.proc[open]>summary{border-bottom:1px solid var(--line)}
+details.proc .body{padding:6px 14px 14px}
+.caltbl{overflow-x:auto}
 </style>
 </head>
 <body>
@@ -61,14 +92,49 @@ label.rem{display:flex;gap:8px;color:var(--dim);font-size:13px;align-items:cente
   <button id="nb-fix" onclick="go('fix')"><span>🧩</span>Fix</button>
   <button id="nb-parts" onclick="go('parts')"><span>⚙️</span>Parts</button>
   <button id="nb-pm" onclick="go('pm')"><span>📅</span>PM</button>
-  <button id="nb-kpi" onclick="go('kpi')"><span>📊</span>KPI</button>
+  <button id="nb-analysis" onclick="go('analysis')"><span>📊</span>Analysis</button>
 </nav>
 <script>
 let DB=null, route={p:'sites'}, PREV=null, siteFilter='All';
+let fixTab='symptom', errMachine='goplus';
 const CARD_L2={artifacts:['Artifacts'],'charging-pins':['Charging Pins'],bcr:['Barcode Reader'],cable:['Cable/Connector'],handswitch:['Hand Switch','Wireless Hand Switch'],'charging-plug':['Charging Plug'],'collimator-handle':['Collimator Handle'],bumper:['Bumper'],wifi:['Wifi'],'wl-pacs':['WL and PACS'],'uu-settings':['UU Settings','SU Settings']};
 const $=id=>document.getElementById(id), V=()=>$('view');
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const md=s=>esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^\|(.+)\|$/gm,r=>'<tr>'+r.split('|').slice(1,-1).map(c=>'<td>'+c.trim()+'</td>').join('')+'</tr>').replace(/(<tr>[\s\S]+?<\/tr>\n?)+/g,m=>'<table>'+m+'</table>');
+
+// ---------- markdown renderer (headings / lists / tables / code / bold) ----------
+function md(src){
+  const lines=String(src||'').split('\n'); let out=[], i=0;
+  const inline=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
+  while(i<lines.length){
+    let l=lines[i];
+    if(/^\|(.+)\|\s*$/.test(l)){                         // pipe table
+      let rows=[];
+      while(i<lines.length&&/^\|(.+)\|\s*$/.test(lines[i])){
+        let cells=lines[i].trim().slice(1,-1).split('|').map(c=>c.trim());
+        if(!cells.every(c=>/^-+$/.test(c))) rows.push(cells);
+        i++;
+      }
+      out.push('<table>'+rows.map((r,ri)=>'<tr>'+r.map(c=>ri?`<td>${inline(c)}</td>`:`<th>${inline(c)}</th>`).join('')+'</tr>').join('')+'</table>');
+      continue;
+    }
+    if(/^###\s+/.test(l)){out.push('<h3>'+inline(l.replace(/^###\s+/,''))+'</h3>');i++;continue;}
+    if(/^##\s+/.test(l)){out.push('<h2>'+inline(l.replace(/^##\s+/,''))+'</h2>');i++;continue;}
+    if(/^\s*[-*]\s+/.test(l)){
+      let items=[];
+      while(i<lines.length&&/^\s*[-*]\s+/.test(lines[i])){items.push('<li>'+inline(lines[i].replace(/^\s*[-*]\s+/,''))+'</li>');i++;}
+      out.push('<ul>'+items.join('')+'</ul>');continue;
+    }
+    if(/^\s*\d+[\.\)]\s+/.test(l)){
+      let items=[];
+      while(i<lines.length&&/^\s*\d+[\.\)]\s+/.test(lines[i])){items.push('<li>'+inline(lines[i].replace(/^\s*\d+[\.\)]\s+/,''))+'</li>');i++;}
+      out.push('<ol>'+items.join('')+'</ol>');continue;
+    }
+    if(l.trim()==='---'){out.push('<hr style="border:0;border-top:1px solid var(--line);margin:10px 0">');i++;continue;}
+    if(l.trim()===''){i++;continue;}
+    out.push('<p>'+inline(l)+'</p>');i++;
+  }
+  return out.join('');
+}
 function goBack(){ if(PREV){const t=PREV;PREV=null;go(t.p,t.arg)} else go('sites'); }
 
 // ---------- crypto gate ----------
@@ -116,11 +182,11 @@ function svcLine(s){
 function go(p,arg){ if(p==='item'||p==='part'||p==='card')PREV=route; route={p,arg}; render(); window.scrollTo(0,0); }
 function render(){
   const map={item:'serial',site:'sites',card:'fix',part:'parts'};
-  ['sites','serial','fix','parts','pm','kpi'].forEach(k=>$('nb-'+k)?.classList.toggle('on',route.p===k||map[route.p]===k));
-  ({sites,serial,fix,parts,pm,kpi,item,site,card,part})[route.p](route.arg);
+  ['sites','serial','fix','parts','pm','analysis'].forEach(k=>$('nb-'+k)?.classList.toggle('on',route.p===k||map[route.p]===k));
+  ({sites,serial,fix,parts,pm,analysis,item,site,card,part})[route.p](route.arg);
 }
 
-// ---------- Sites (with cluster/sector filters) ----------
+// ---------- Sites ----------
 function sites(){
   V().innerHTML=`<input type=search id=q placeholder="Search sites…" oninput="drawSites()">
    <div class="chips">
@@ -189,9 +255,20 @@ function item(sn){
    ${hist.length?hist.map(svcLine).join(''):'<div class=dim>No CM records reference this serial.</div>'}`;
 }
 
-// ---------- Troubleshoot ----------
+// ==================================================================
+//  FIX  →  sub-tabs: Symptom | Error Codes | Procedures
+// ==================================================================
 function fix(){
-  V().innerHTML=`<input type=search id=q placeholder="Symptom, error code, machine… e.g. 'A9', 'artifact'" oninput="fixSearch()">
+  V().innerHTML=`<div class="subtabs">
+     <button class="${fixTab==='symptom'?'on':''}" onclick="fixTab='symptom';fix()">🩺 By Symptom</button>
+     <button class="${fixTab==='errors'?'on':''}" onclick="fixTab='errors';fix()">🔢 Error Codes</button>
+     <button class="${fixTab==='proc'?'on':''}" onclick="fixTab='proc';fix()">📋 Procedures</button>
+   </div><div id=fixbody></div>`;
+  ({symptom:fixSymptom,errors:fixErrors,proc:fixProc})[fixTab]();
+}
+// --- 1) By Symptom (Solution Cards + past cases) ---
+function fixSymptom(){
+  $('fixbody').innerHTML=`<input type=search id=q placeholder="Symptom, error code, machine… e.g. 'A9', 'artifact'" oninput="fixSearch()">
    <div id=list>${DB.cards.map(cardRow).join('')}</div>`;
 }
 function cardRow(c){return `<div class="card click" onclick="go('card','${c.id}')"><div class="row"><h3>${esc(c.title)}</h3><span class="tag">${esc(c.cat)}</span></div><div class="dim">${esc((c.machines||[]).join(', '))}</div></div>`}
@@ -204,9 +281,49 @@ function fixSearch(){
   }
   $('list').innerHTML=out||'<div class=dim style=margin-top:10px>No card matches — try past-case search with 3+ characters, or the SOP hub in Notion.</div>';
 }
-function partsForL2s(l2s){
-  return DB.parts.filter(p=>Object.keys(p.l2).some(k=>l2s.includes(k))).sort((a,b)=>b.n-a.n);
+// --- 2) Error Code Index ---
+function fixErrors(){
+  const machs=DB.errors||[];
+  $('fixbody').innerHTML=`
+   <div class="chips">${machs.map(m=>`<button class="chip${errMachine===m.id?' on':''}" onclick="errMachine='${m.id}';fixErrors()">${esc(m.name.split(' (')[0])}</button>`).join('')}</div>
+   <input type=search id=eq placeholder="Search code / name / remedy… e.g. '11228', 'battery', 'F04'" oninput="drawErrors()">
+   <div id=elist></div>`;
+  drawErrors();
 }
+function drawErrors(){
+  const m=(DB.errors||[]).find(x=>x.id===errMachine); if(!m){$('elist').innerHTML='';return}
+  const q=($('eq')?.value||'').toLowerCase().trim();
+  let html=`<div class="hint" style="margin:8px 0">${esc(m.name)} — ${esc(m.note)}</div>`, hits=0;
+  m.groups.forEach(g=>{
+    const rows=g.rows.filter(r=>!q||r.join(' ').toLowerCase().includes(q));
+    if(!rows.length)return; hits+=rows.length;
+    html+=`<div class="sys">${esc(g.title)}</div><div class="caltbl"><table><tr>${g.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`+
+      rows.map(r=>'<tr>'+r.map((c,ci)=>ci===0?`<td><b style="color:var(--acc)">${esc(c)}</b></td>`:`<td>${esc(c)}</td>`).join('')+'</tr>').join('')+`</table></div>`;
+  });
+  $('elist').innerHTML=hits?html:`<div class=dim style=margin-top:10px>No error code matches “${esc(q)}”. Try the code only (e.g. 11228) or a keyword (battery, fuse).</div>`;
+}
+// --- 3) Common Procedures ---
+function fixProc(){
+  const p=DB.procedures||{}; const cal=p.calibration; const docs=p.docs||[];
+  let html='';
+  if(cal){
+    html+=`<details class="proc" open><summary><span>🎯 ${esc(cal.title)}</span><span class="tag acc">Values</span></summary><div class="body">
+      <div class="hint" style="margin-bottom:6px">${esc(cal.note)}</div>`;
+    cal.blocks.forEach(b=>{
+      html+=`<div class="sys">${esc(b.group)}</div>`;
+      b.sets.forEach(s=>{
+        html+=`<div style="font-weight:600;font-size:13px;margin:8px 0 2px">${esc(s.machine)}</div><div class="caltbl"><table><tr>${s.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`+
+          s.rows.map(r=>'<tr>'+r.map((c,ci)=>ci===0?`<td><b>${esc(c)}</b></td>`:`<td>${esc(c)}</td>`).join('')+'</tr>').join('')+`</table></div>`;
+      });
+    });
+    html+=`</div></details>`;
+  }
+  docs.forEach(d=>{
+    html+=`<details class="proc"><summary><span>${d.tag==='Playbook'?'🧭':(d.tag==='QA'?'🧪':'🛠️')} ${esc(d.title)}</span><span class="tag">${esc(d.tag)}</span></summary><div class="body md">${md(d.md)}</div></details>`;
+  });
+  $('fixbody').innerHTML=html+`<div class="hint" style="margin-top:10px">AI-consolidated from Notion SOP folder — verify against the source SOP; report gaps.</div>`;
+}
+function partsForL2s(l2s){return DB.parts.filter(p=>Object.keys(p.l2).some(k=>l2s.includes(k))).sort((a,b)=>b.n-a.n);}
 function partRow(p){
   return `<div class="card click" onclick="go('part',${JSON.stringify(p.pn||p.name).replace(/"/g,'&quot;')})">
    <div class="row"><h3>${esc(p.name)}</h3><span class="tag acc">×${p.n}</span></div>
@@ -235,7 +352,6 @@ function partsSearch(){
 }
 function part(key){
   const p=DB.parts.find(x=>(x.pn||x.name)===key); if(!p){go('parts');return}
-  // find full CM records using this part
   const rec=DB.svc.filter(s=>(s.parts||[]).some(x=>p.pn?x.includes(p.pn):x.toLowerCase().includes(p.name.toLowerCase()))).sort((a,b)=>b.d.localeCompare(a.d));
   const relCards=DB.cards.filter(c=>(CARD_L2[c.id]||[]).some(l=>p.l2[l]));
   V().innerHTML=`<span class="back" onclick="goBack()">← Parts</span>
@@ -270,37 +386,136 @@ function pmLine(x){
    ${x.addr?`<div class="hint">${esc(x.addr)}</div>`:''}</div>`;
 }
 
-// ---------- KPI ----------
-let kpiYear='2026';
-function kpi(){
-  const years=['2025','2026','All'];
-  const rows=DB.svc.filter(s=>kpiYear==='All'||s.d.startsWith(kpiYear));
-  const solo=rows.filter(s=>(s.pic||[]).length===1).length, tot=rows.filter(s=>(s.pic||[]).length>0).length;
-  const per={}, pairs={};
-  rows.forEach(s=>{
-    const p=s.pic||[];
-    p.forEach(n=>{per[n]=per[n]||{t:0,s:0,r:0};per[n].t++;if(p.length===1)per[n].s++;});
-    if(s.st==='重開解決')p.forEach(n=>per[n].r++);
-    for(let i=0;i<p.length;i++)for(let j=i+1;j<p.length;j++){const k=[p[i],p[j]].sort().join(' + ');pairs[k]=(pairs[k]||0)+1;}
-  });
-  const pt={};
-  rows.forEach(s=>(s.pt||[]).forEach(t=>{pt[t]=pt[t]||{n:0,s:0};pt[t].n++;if((s.pic||[]).length===1)pt[t].s++;}));
+// ==================================================================
+//  ANALYSIS  (was KPI) — full CM data analysis (deck spec) + solo/collab
+// ==================================================================
+let anYear='2026', anSec='overview';
+const AN_SECS=[['overview','Overview'],['sites','Sites'],['people','People'],['problems','Problems'],['rootcause','Root cause'],['quality','Quality']];
+const C_SERIES=['var(--acc)','var(--g2)','var(--warn)','#a87bff','#19c2c2','#ff7eb6'];
+const anRows=()=>DB.svc.filter(s=>anYear==='All'||(s.d||'').startsWith(anYear));
+const hasRv=()=>DB.svc.some(s=>s.rv);
+function tally(rows,acc){const m={};rows.forEach(r=>{let v=acc(r);if(v==null)return;(Array.isArray(v)?v:[v]).forEach(x=>{if(x==null||x==='')return;m[x]=(m[x]||0)+1;});});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
+function shortSite(s){return String(s).replace('Princess Margaret','PMH').replace('Pamela Youde Nethersole Eastern','PYNEH').replace('Queen Elizabeth','QEH').replace('Queen Mary','QMH').replace('Kwong Wah','KWH').replace('Tuen Mun','TMH').replace('United Christian','UCH').replace('Prince of Wales','PWH').replace('North District','NDH').replace('Tseung Kwan O','TKO').replace('Alice Homiu Ling Nethersole','AHNH').replace(/Hospital|Hopsital|Hosptal/,'Hosp.').replace(' Limited','');}
+function barSimple(label,val,max,color){const w=max?100*val/max:0;return `<div class="bar-row"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(label)}">${esc(label)}</div><div class="bar-track"><div style="width:${w}%;height:100%;background:${color||'var(--acc)'}"></div></div><div class="bar-pct">${val}</div></div>`;}
+function barList(pairs,color,limit,short){const top=pairs.slice(0,limit||12);const max=top.length?top[0][1]:1;return top.map(([k,v])=>barSimple(short?shortSite(k):k,v,max,color)).join('')||'<div class=dim>No data.</div>';}
+function svgTrend(series){
+  if(series.length<2)return '<div class=dim>Not enough data.</div>';
+  const W=680,H=170,pad=26,vals=series.map(s=>s[1]),max=Math.max(...vals,1),n=series.length;
+  const x=i=>pad+(W-2*pad)*i/(n-1), y=v=>H-20-(H-38)*(v/max);
+  const pts=series.map((s,i)=>[x(i),y(s[1])]);
+  const line=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const area=`M${pts[0][0].toFixed(1)} ${H-20} `+pts.map(p=>'L'+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ')+` L${pts[n-1][0].toFixed(1)} ${H-20} Z`;
+  const step=Math.ceil(n/6);
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" preserveAspectRatio="xMidYMid meet">
+    <path d="${area}" fill="rgba(52,209,122,.15)"/><path d="${line}" fill="none" stroke="var(--g2)" stroke-width="2"/>
+    ${pts.map(p=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4" fill="var(--g2)"/>`).join('')}
+    ${series.map((s,i)=>i%step===0?`<text x="${x(i).toFixed(1)}" y="${H-5}" font-size="9" fill="var(--dim)" text-anchor="middle">${esc(s[0])}</text>`:'').join('')}
+    <text x="2" y="11" font-size="9" fill="var(--dim)">${max}</text></svg>`;
+}
+function analysis(){
   V().innerHTML=`
-   <div class="chips">${years.map(y=>`<button class="chip${kpiYear===y?' on':''}" onclick="kpiYear='${y}';kpi()">${y}</button>`).join('')}</div>
-   <div class="card"><h3>Team overview (${kpiYear})</h3>
-    <div class="dim">${rows.length} CM records · <b style="color:var(--acc)">${tot?Math.round(100*solo/tot):0}% solo</b> / ${tot?100-Math.round(100*solo/tot):0}% collaborative</div></div>
-   <div class="card"><h3>Per engineer</h3>
-    <table><tr><th>PIC</th><th>Tickets</th><th>Solo</th><th>Solo %</th></tr>
-    ${Object.entries(per).sort((a,b)=>b[1].t-a[1].t).map(([n,v])=>`<tr><td>${esc(n)}</td><td>${v.t}</td><td>${v.s}</td><td>${Math.round(100*v.s/v.t)}%</td></tr>`).join('')}</table>
-    <div class="hint">Case-mix matters (S1): solo % reflects ticket types, not ability. Quarterly windows are authoritative — this is directional.</div></div>
-   <div class="card"><h3>Top collaboration pairs</h3>
-    ${Object.entries(pairs).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><span class="dim">${v}</span></div>`).join('')}</div>
-   <div class="card"><h3>Solo rate by problem type</h3>
-    <table><tr><th>Type</th><th>n</th><th>Solo %</th></tr>
-    ${Object.entries(pt).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${v.n}</td><td>${Math.round(100*v.s/v.n)}%</td></tr>`).join('')}</table></div>
+   <div class="chips">${AN_SECS.map(([k,l])=>`<button class="chip${anSec===k?' on':''}" onclick="anSec='${k}';analysis()">${l}</button>`).join('')}</div>
+   <div class="chips">${['2025','2026','All'].map(y=>`<button class="chip${anYear===y?' on':''}" onclick="anYear='${y}';analysis()">${y==='All'?'All time':y}</button>`).join('')}</div>
+   <div id=ansec></div>`;
+  ({overview:anOverview,sites:anSites,people:anPeople,problems:anProblems,rootcause:anRoot,quality:anQuality})[anSec]();
+}
+function anOverview(){
+  const rows=anRows();
+  const monthly=tally(DB.svc,s=>(s.d||'').slice(0,7)).filter(x=>x[0]).sort((a,b)=>a[0].localeCompare(b[0]));
+  const m2025=monthly.filter(x=>x[0].startsWith('2025')); const avg=m2025.length?Math.round(m2025.reduce((a,b)=>a+b[1],0)/m2025.length):0;
+  const rv=DB.svc.filter(s=>s.rv==='Revisited').length;
+  const prob=tally(rows,s=>s.pt);
+  const dates=DB.svc.map(s=>s.d).filter(Boolean).sort();
+  $('ansec').innerHTML=`
+   <div class="dim" style="margin:2px 0 4px">CM_Service_Record_DataBase · ${dates[0]} → ${dates[dates.length-1]}</div>
+   <div class="kpis">
+     <div class="kpi"><div class="n">${DB.svc.length.toLocaleString()}</div><div class="l">Total CM records</div></div>
+     <div class="kpi"><div class="n g">${rows.length}</div><div class="l">Records (${anYear==='All'?'all time':anYear})</div></div>
+     <div class="kpi"><div class="n a">${avg}</div><div class="l">Avg / month (2025)</div></div>
+     <div class="kpi"><div class="n" style="color:var(--bad)">${hasRv()?rv:'—'}</div><div class="l">Revisits within 7 days${hasRv()?'':' (pending rebuild)'}</div></div>
+   </div>
+   <div class="card"><h3>Monthly CM trend <span class="dim">all history</span></h3>${svgTrend(monthly.map(([m,v])=>[m.slice(2),v]))}</div>
+   <div class="card"><h3>Problem types share (${anYear==='All'?'all time':anYear})</h3>${barList(prob,'var(--warn)',11)}</div>`;
+}
+function anSites(){
+  const rows=anRows();
+  $('ansec').innerHTML=`<div class="card"><h3>CM by hospital — top 12 (${anYear==='All'?'all time':anYear})</h3>
+    <div class="dim" style="margin-bottom:6px">Where the corrective-maintenance load concentrates</div>
+    ${barList(tally(rows,s=>s.site),'var(--acc)',12,true)}</div>`;
+}
+function anPeople(){
+  const rows=anRows();
+  const withPic=rows.filter(s=>(s.pic||[]).length>0);
+  const per={},pairs={};
+  withPic.forEach(s=>{const p=s.pic;p.forEach(n=>{per[n]=per[n]||{t:0,s:0};per[n].t++;if(p.length===1)per[n].s++;});
+    for(let i=0;i<p.length;i++)for(let j=i+1;j<p.length;j++){const k=[p[i],p[j]].sort().join(' & ');pairs[k]=(pairs[k]||0)+1;}});
+  const perArr=Object.entries(per).map(([n,v])=>({n,t:v.t,s:v.s,c:v.t-v.s,pct:Math.round(100*v.s/v.t)})).filter(x=>x.t>=3).sort((a,b)=>b.pct-a.pct||b.t-a.t);
+  const pairArr=Object.entries(pairs).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const counts=tally(rows,s=>s.pic);
+  const solo=withPic.filter(s=>s.pic.length===1).length, tot=withPic.length, soloPct=tot?Math.round(100*solo/tot):0;
+  const top=perArr[0], low=[...perArr].sort((a,b)=>a.pct-b.pct||b.t-a.t)[0];
+  $('ansec').innerHTML=`
+   <div class="card"><h3>CM count by engineer (PIC) — ${anYear==='All'?'all time':anYear}</h3>${barList(counts,'var(--acc)',14)}</div>
+   <div class="kpis"><div class="kpi"><div class="n g">${soloPct}%</div><div class="l">Tickets handled solo</div></div>
+     <div class="kpi"><div class="n">${100-soloPct}%</div><div class="l">Tickets needing 2+ people</div></div></div>
+   <div class="card"><h3>Solo vs. collaborative, by engineer</h3>
+     <div class="dim" style="margin-bottom:6px">Sorted by solo %, high→low · ≥3 tickets</div>
+     <div class="legend"><span><span class="dot" style="background:var(--solo)"></span>Solo</span><span><span class="dot" style="background:var(--collab)"></span>Collaborative</span></div>
+     ${perArr.map(x=>hbar(x.n,x.s,x.c,x.pct)).join('')||'<div class=dim>No data.</div>'}</div>
+   <div class="card"><h3>Top collaboration pairs</h3><table><tr><th>Pair</th><th style="text-align:right">Together</th></tr>
+     ${pairArr.map(([k,v])=>`<tr><td>${esc(k)}</td><td style="text-align:right">${v}</td></tr>`).join('')}</table></div>
+   ${top&&low?`<div class="insight"><b>${esc(top.n)}</b> is the most independent this period (${top.pct}% solo, ${top.t} tickets); <b>${esc(low.n)}</b> is almost always paired (${low.pct}% solo). <span class="hint">Case-mix caveat: solo % reflects ticket types, not ability.</span></div>`:''}`;
+}
+function anProblems(){
+  const rows=anRows();
+  $('ansec').innerHTML=`
+   <div class="card"><h3>Problem types (${anYear==='All'?'all time':anYear})</h3>${barList(tally(rows,s=>s.pt),'var(--warn)',12)}</div>
+   <div class="card"><h3>CM by machine model</h3>${barList(tally(rows,s=>s.mach),'var(--g2)',12)}</div>
+   <div class="card"><h3>Top symptoms</h3>${barList(tally(rows,s=>s.sym),'#a87bff',12)}</div>`;
+}
+function anRoot(){
+  const rows=anRows();
+  $('ansec').innerHTML=`
+   <div class="card"><h3>Error codes (${anYear==='All'?'all time':anYear})</h3>
+     <div class="dim" style="margin-bottom:6px">Look them up in Fix › Error Codes</div>${barList(tally(rows,s=>s.err),'var(--warn)',15)}</div>
+   <div class="card"><h3>Root cause — Problem L2</h3>${barList(tally(rows,s=>s.l2),'var(--acc)',15)}</div>
+   <div class="card"><h3>Most-used replacement parts</h3>${barList(tally(rows,s=>s.parts),'var(--g2)',15)}</div>`;
+}
+function anQuality(){
+  const rows=anRows();
+  const monthly=tally(DB.svc,s=>(s.d||'').slice(0,7)).filter(x=>x[0]).sort((a,b)=>a[0].localeCompare(b[0]));
+  const q=monthly.slice(-3);
+  const topSite=tally(rows,s=>s.site)[0], topMach=tally(rows,s=>s.mach).slice(0,2), topProb=tally(rows,s=>s.pt).slice(0,2);
+  let revHtml;
+  if(hasRv()){
+    const rv=DB.svc.filter(s=>s.rv==='Revisited');
+    const rvRows=rows.filter(s=>s.rv==='Revisited');
+    const rate=(rv.length/DB.svc.length*100).toFixed(1);
+    revHtml=`<div class="kpis" style="grid-template-columns:repeat(2,1fr)">
+       <div class="kpi"><div class="n" style="color:var(--bad)">${rv.length}</div><div class="l">Total revisits (7-day, same S/N + symptom)</div></div>
+       <div class="kpi"><div class="n a">${rate}%</div><div class="l">Revisit rate, all-time</div></div></div>
+     <div class="card"><h3>Revisit symptoms (${anYear==='All'?'all time':anYear})</h3>${barList(tally(rvRows,s=>s.sym),'var(--bad)',10)}</div>`;
+  }else{
+    revHtml=`<div class="card"><h3>Revisits within 7 days</h3><div class="insight" style="border-left-color:var(--warn)">This chart activates on the next nightly rebuild — the exact <b>“Revisited within 7 days (same symptoms)”</b> field was just added to <code>pull_notion.py</code>. Until then it isn't in this offline snapshot. (Rule: same S/N + same symptoms within 7 days.)</div></div>`;
+  }
+  $('ansec').innerHTML=`
+   ${revHtml}
+   <div class="card"><h3>Last 3 months — CM volume</h3><table><tr><th>Month</th><th style="text-align:right">CM records</th></tr>
+     ${q.map(([m,v])=>`<tr><td>${m}</td><td style="text-align:right">${v}</td></tr>`).join('')}</table></div>
+   <div class="card"><h3>Key takeaways (${anYear==='All'?'all time':anYear})</h3>
+     ${topSite?`<div class="insight"><b>Demand:</b> ${esc(topSite[0])} is the highest-demand site (${topSite[1]} CM records). ${topMach.length?`Machines ${topMach.map(m=>esc(m[0])+' ('+m[1]+')').join(' + ')} dominate the workload.`:''}</div>`:''}
+     ${topProb.length?`<div class="insight"><b>Failure modes:</b> ${topProb.map(p=>esc(p[0])+' ('+p[1]+')').join(' and ')} are the top problem categories — feed these back into SOP / checklists.</div>`:''}
+     <div class="hint">Numbers computed live from the offline snapshot; consistent with the CM 數據分析 page.</div></div>
    <div class="sys">Browse records</div>
    <input type=search id=q placeholder="Filter by site / L2 / serial / PIC…" oninput="histSearch()"><div id=list></div>`;
   histSearch();
+}
+function hbar(label,solo,collab,pct){
+  const tot=solo+collab||1, sp=100*solo/tot, cp=100*collab/tot;
+  return `<div class="bar-row"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</div>
+    <div class="bar-track" title="${solo} solo / ${collab} collab">
+      <div class="bar-solo" style="width:${sp}%"></div><div class="bar-collab" style="width:${cp}%"></div>
+    </div><div class="bar-pct">${pct}%</div></div>`;
 }
 function histSearch(){
   const q=($('q')?.value||'').toLowerCase();
