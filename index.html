@@ -6,14 +6,17 @@
 <title>FUJI Field</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f1720">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
 :root{--bg:#0f1720;--card:#1a2530;--line:#2a3947;--tx:#e8eef4;--dim:#8ba0b3;--acc:#4fc3f7;--ok:#66bb6a;--warn:#ffa726;--bad:#ef5350;--solo:#2a78d6;--collab:#c3c2b7;--g2:#34d17a}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--tx);font:15px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif;padding-bottom:64px}
-header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 14px;z-index:5;display:flex;justify-content:space-between;align-items:center}
+body{background:var(--bg);color:var(--tx);font:15px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif;padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 14px;padding-top:calc(10px + env(safe-area-inset-top));z-index:5;display:flex;justify-content:space-between;align-items:center}
 h1{font-size:17px}
 #asof{font-size:11px;color:var(--dim)}
-nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);z-index:5}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);z-index:5;padding-bottom:env(safe-area-inset-bottom)}
 nav button{flex:1;background:none;border:0;color:var(--dim);padding:8px 0 6px;font-size:10px;cursor:pointer}
 nav button.on{color:var(--acc)}
 nav button span{display:block;font-size:18px}
@@ -73,6 +76,20 @@ details.proc>summary::-webkit-details-marker{display:none}
 details.proc[open]>summary{border-bottom:1px solid var(--line)}
 details.proc .body{padding:6px 14px 14px}
 .caltbl{overflow-x:auto}
+/* ---- V4 additions ---- */
+.fld{margin:10px 0}
+.fld label{display:block;font-size:12px;color:var(--dim);margin-bottom:4px}
+.fld input[type=date],.fld input[type=text],.fld select,.fld textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-size:15px;outline:none;font-family:inherit}
+.fld textarea{min-height:84px;resize:vertical}
+.btn{display:inline-block;width:100%;padding:12px;border-radius:10px;border:0;background:var(--acc);color:#00222f;font-weight:700;font-size:15px;cursor:pointer;margin-top:8px}
+.btn.sec{background:none;border:1px solid var(--line);color:var(--dim)}
+.btn.warn{background:var(--warn);color:#2a1600}
+.btn.sm{width:auto;padding:7px 14px;font-size:12.5px;margin:4px 6px 0 0}
+#syncb{font-size:11px;color:var(--warn);cursor:pointer;margin-right:8px}
+.pend{border-left:3px solid var(--warn)}
+.okline{color:var(--ok);font-size:12.5px}
+#iosbanner{background:#141c24;border:1px solid var(--acc);border-radius:12px;padding:12px 14px;margin:10px 0;font-size:13px;color:var(--dim)}
+#iosbanner b{color:var(--tx)}
 </style>
 </head>
 <body>
@@ -84,7 +101,7 @@ details.proc .body{padding:6px 14px 14px}
   <div class="err" id="gerr"></div>
   <button onclick="unlock()">Unlock</button>
 </div>
-<header><h1>🧰 FUJI Field</h1><div id="asof"></div></header>
+<header><h1>🧰 FUJI Field</h1><div><span id="syncb" onclick="go('outbox')"></span><span id="asof"></span></div></header>
 <main id="view"></main>
 <nav>
   <button id="nb-sites" onclick="go('sites')"><span>🏥</span>Sites</button>
@@ -100,6 +117,14 @@ let fixTab='symptom', errMachine='goplus';
 const CARD_L2={artifacts:['Artifacts'],'charging-pins':['Charging Pins'],bcr:['Barcode Reader'],cable:['Cable/Connector'],handswitch:['Hand Switch','Wireless Hand Switch'],'charging-plug':['Charging Plug'],'collimator-handle':['Collimator Handle'],bumper:['Bumper'],wifi:['Wifi'],'wl-pacs':['WL and PACS'],'uu-settings':['UU Settings','SU Settings']};
 const $=id=>document.getElementById(id), V=()=>$('view');
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ================= V4 config =================
+const WORKER_URL='https://fuji-field-proxy.raysit-claude.workers.dev';
+const WRITE_KEY_LS='fw_wkey', NAME_LS='fw_name', OUTBOX_LS='fw_outbox', VISITS_LS='fw_visits';
+const ACTIVE=['Anson','Poon','Pong','Alan','Yoshida','Ivan','Ray','Joe','Eunice','Tai','Kenton','Tim'];
+const RESULTS=['Completed','Completed with findings','Partial - follow-up needed','Not done - rescheduled'];
+const PM_TYPES=['Scheduled PM','Ad-hoc PM','Safety/QA Test','Installation Check'];
+const workerReady=()=>WORKER_URL.startsWith('https');
 
 // ---------- markdown renderer (headings / lists / tables / code / bold) ----------
 function md(src){
@@ -156,7 +181,7 @@ async function unlock(){
   }catch(e){ $('gerr').textContent='Wrong password (or data not reachable).'; }
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-function boot(){$('gate').style.display='none';$('asof').textContent='Data: '+DB.asof;go('sites');}
+function boot(){$('gate').style.display='none';$('asof').textContent='Data: '+DB.asof;updateSyncBadge();flushOutbox();go('sites');}
 
 // ---------- shared render helpers ----------
 const activeItems=()=>DB.items.filter(i=>i.status!=='Retired');
@@ -179,11 +204,11 @@ function svcLine(s){
 }
 
 // ---------- router ----------
-function go(p,arg){ if(p==='item'||p==='part'||p==='card')PREV=route; route={p,arg}; render(); window.scrollTo(0,0); }
+function go(p,arg){ if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox'].includes(p))PREV=route; route={p,arg}; render(); window.scrollTo(0,0); }
 function render(){
-  const map={item:'serial',site:'sites',card:'fix',part:'parts'};
+  const map={item:'serial',site:'sites',card:'fix',part:'parts',visitnew:'pm',visitedit:'pm',logresult:'pm',mismatch:'serial',outbox:'pm'};
   ['sites','serial','fix','parts','pm','analysis'].forEach(k=>$('nb-'+k)?.classList.toggle('on',route.p===k||map[route.p]===k));
-  ({sites,serial,fix,parts,pm,analysis,item,site,card,part})[route.p](route.arg);
+  ({sites,serial,fix,parts,pm,analysis,item,site,card,part,visitnew,visitedit,logresult,mismatch,outbox})[route.p](route.arg);
 }
 
 // ---------- Sites ----------
@@ -239,7 +264,7 @@ function serialSearch(){
   const q=$('q').value.trim().toUpperCase();
   if(q.length<3){$('list').innerHTML='<div class=dim style=margin-top:10px>Type at least 3 characters.</div>';return}
   const hits=DB.items.filter(i=>i.sn.toUpperCase().includes(q)).slice(0,30);
-  $('list').innerHTML=hits.length?hits.map(i=>itemLine(i,true)).join(''):'<div class=dim style=margin-top:10px>No match. Check 1↔I and 0↔O — typos exist. If genuinely new, log it for the Item Master.</div>';
+  $('list').innerHTML=hits.length?hits.map(i=>itemLine(i,true)).join(''):`<div class=dim style=margin-top:10px>No match. Check 1↔I and 0↔O — typos exist. If the unit in front of you really isn't listed, report it:</div><button class="btn warn" onclick="go('mismatch','')">🔁 Report serial mismatch</button>`;
 }
 function item(sn){
   const i=DB.items.find(x=>x.sn===sn); if(!i){go('serial');return}
@@ -249,7 +274,8 @@ function item(sn){
    <div class="card"><div class="row"><h3>${esc(i.sn)}</h3>${statusTag(i.status)}</div>
    <div>${esc(i.title||'')}</div>
    <div class="dim">${esc(i.model||'')} · ${esc(i.type||'')} ${i.sysno?('· System <b style=color:var(--acc)>'+esc(i.sysno)+'</b>'):''}</div>
-   <div class="dim">${esc(i.site||'')} ${i.loc?('· '+esc(i.loc)):''}</div>${i.addr?`<div class="hint">${esc(i.addr)}</div>`:''}</div>
+   <div class="dim">${esc(i.site||'')} ${i.loc?('· '+esc(i.loc)):''}</div>${i.addr?`<div class="hint">${esc(i.addr)}</div>`:''}
+   <button class="btn sec sm" onclick="go('mismatch',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">🔁 Serial on the unit is different? Report it</button></div>
    ${set.length?`<div class="sys">Same system set (${esc(i.sysno)})</div>`+set.map(x=>itemLine(x,false)).join(''):''}
    <div class="sys">Service history (${hist.length})</div>
    ${hist.length?hist.map(svcLine).join(''):'<div class=dim>No CM records reference this serial.</div>'}`;
@@ -364,11 +390,21 @@ function part(key){
    ${rec.map(svcLine).join('')}`;
 }
 
-// ---------- PM schedule ----------
-let pmPic='All', pmSt='All';
+// ==================================================================
+//  PM  →  sub-tabs: Visit Log (live, writable) | Master List (bundle)
+// ==================================================================
+let pmTab='visits', pmPic='All', pmSt='All', vPic='Mine', vSt='Open';
 function pm(){
+  V().innerHTML=`<div class="subtabs">
+     <button class="${pmTab==='visits'?'on':''}" onclick="pmTab='visits';pm()">📝 Visit Log</button>
+     <button class="${pmTab==='master'?'on':''}" onclick="pmTab='master';pm()">🗂 Master List</button>
+   </div><div id=pmbody></div>`;
+  ({visits:pmVisits,master:pmMaster})[pmTab]();
+}
+// --- Master List (read-only, from nightly bundle — unchanged V3 behaviour) ---
+function pmMaster(){
   const pics=[...new Set(DB.pm.flatMap(x=>x.pic))].sort();
-  V().innerHTML=`
+  $('pmbody').innerHTML=`
    <div class="chips">${['All','Jul Schedule','Outstanding','Waiting for Sign'].map(s=>`<button class="chip${pmSt===s?' on':''}" onclick="pmSt='${s}';pm()">${s}</button>`).join('')}</div>
    <div class="chips">${['All',...pics].map(p=>`<button class="chip${pmPic===p?' on':''}" onclick="pmPic='${p.replace(/'/g,"\\'")}';pm()">${p}</button>`).join('')}</div>
    <div id=list></div>`;
@@ -385,6 +421,197 @@ function pmLine(x){
    <div>${x.pic.map(p=>`<span class="tag">👤 ${esc(p)}</span>`).join('')}<span class="tag ${st}">${esc(x.st)}</span><span class="tag">${esc(x.grp)}</span></div>
    ${x.addr?`<div class="hint">${esc(x.addr)}</div>`:''}</div>`;
 }
+
+// ================= V4: identity, outbox, live visits =================
+const uid=()=>crypto.randomUUID?crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2));
+const myName=()=>localStorage.getItem(NAME_LS)||'';
+const writeKey=()=>localStorage.getItem(WRITE_KEY_LS)||'';
+function needIdentity(){ if(!workerReady())return 'Worker URL not configured yet — ask R.'; if(!writeKey())return 'setkey'; if(!myName())return 'setname'; return null; }
+function identityCard(){
+  return `<div class="card"><h3>⚙️ Setup</h3>
+    <div class="fld"><label>Your name (stamped on every entry you submit)</label>
+      <div class="chips">${ACTIVE.map(n=>`<button class="chip${myName()===n?' on':''}" onclick="localStorage.setItem('${NAME_LS}','${n}');render()">${n}</button>`).join('')}</div></div>
+    <div class="fld"><label>Team write key (get it from R — not the data password)</label>
+      <input type="text" id="wkey" value="${esc(writeKey())}" placeholder="Write key" autocapitalize="off" autocorrect="off">
+      <button class="btn sm sec" onclick="localStorage.setItem('${WRITE_KEY_LS}',$('wkey').value.trim());render()">Save key</button></div></div>`;
+}
+// ---- outbox (offline write queue) ----
+const getOutbox=()=>JSON.parse(localStorage.getItem(OUTBOX_LS)||'[]');
+const setOutbox=a=>{localStorage.setItem(OUTBOX_LS,JSON.stringify(a));updateSyncBadge()};
+function enqueue(method,path,payload,label){
+  const box=getOutbox();
+  box.push({uuid:uid(),method,path,payload,label,st:'queued',err:'',ts:new Date().toISOString()});
+  setOutbox(box); flushOutbox();
+}
+let flushing=false;
+async function flushOutbox(){
+  if(flushing||!workerReady()||!navigator.onLine)return; flushing=true;
+  try{
+    let box=getOutbox();
+    for(const j of box.filter(x=>x.st!=='confirmed')){
+      try{
+        const r=await fetch(WORKER_URL+j.path,{method:j.method,
+          headers:{'Content-Type':'application/json','X-Write-Key':writeKey()},
+          body:JSON.stringify({...j.payload,uuid:j.uuid,by:myName()})});
+        const d=await r.json();
+        if(d.ok){j.st='confirmed';j.err='';j.id=d.id;}
+        else{j.st=r.status>=500?'queued':'failed';j.err=d.error||('HTTP '+r.status);}
+      }catch(e){ j.st='queued'; j.err='offline / network'; break; }
+      setOutbox(box);
+    }
+    // drop confirmed entries older than 3 days
+    box=getOutbox().filter(x=>x.st!=='confirmed'||(Date.now()-new Date(x.ts))<3*86400e3);
+    setOutbox(box);
+    if(getOutbox().every(x=>x.st==='confirmed')) refreshVisits(true);
+  } finally{ flushing=false; if(route.p==='pm'&&pmTab==='visits')render(); }
+}
+function updateSyncBadge(){
+  const n=getOutbox().filter(x=>x.st!=='confirmed').length;
+  $('syncb').textContent=n?`⏳ ${n} pending`:'';
+}
+// ---- live visits cache ----
+const getVisits=()=>JSON.parse(localStorage.getItem(VISITS_LS)||'null');
+async function refreshVisits(silent){
+  if(!workerReady()||!writeKey()||!navigator.onLine)return;
+  try{
+    const r=await fetch(WORKER_URL+'/visits',{headers:{'X-Write-Key':writeKey()}});
+    const d=await r.json();
+    if(d.ok){localStorage.setItem(VISITS_LS,JSON.stringify(d));if(!silent&&route.p==='pm')render();}
+  }catch(e){}
+}
+function vLine(v){
+  const open=!v.result;
+  const pend=String(v.id).startsWith('pending');
+  return `<div class="card${pend?' pend':''}">
+   <div class="row"><h3>${esc(v.site)}</h3><span class="dim">${esc(v.d||'no date')}</span></div>
+   <div class="dim">${esc(v.item||'')} ${v.sn?('· '+esc(v.sn)):''} · ${esc(v.type||'')}</div>
+   <div>${(v.pic||[]).map(p=>`<span class="tag">👤 ${esc(p)}</span>`).join('')}
+     ${v.result?`<span class="tag ${v.result==='Completed'?'ok':(v.result.startsWith('Not')?'bad':'warn')}">${esc(v.result)}</span>`:'<span class="tag acc">Open</span>'}
+     ${v.followup?'<span class="tag bad">CM follow-up</span>':''}
+     ${pend?'<span class="tag warn">⏳ not synced</span>':''}</div>
+   ${v.findings?`<div class="hint">${esc(v.findings)}</div>`:''}
+   ${!pend?`<div>
+     <button class="btn sm sec" onclick="go('visitedit','${v.id}')">📅 Reschedule</button>
+     ${open?`<button class="btn sm" onclick="go('logresult','${v.id}')">✅ Log result</button>`:`<button class="btn sm sec" onclick="go('logresult','${v.id}')">✏️ Edit result</button>`}
+   </div>`:''}</div>`;
+}
+function pmVisits(){
+  const need=needIdentity();
+  if(need==='setkey'||need==='setname'){$('pmbody').innerHTML=identityCard();return}
+  if(need){$('pmbody').innerHTML=`<div class="card"><div class="dim">${esc(need)}</div></div>`;return}
+  const cache=getVisits();
+  let rows=cache?cache.visits.slice():[];
+  // overlay: queued new-visit entries not yet in Notion
+  getOutbox().filter(x=>x.st!=='confirmed'&&x.path==='/visit'&&x.method==='POST').forEach(x=>{
+    rows.unshift({id:'pending-'+x.uuid,site:x.payload.site,d:x.payload.date,sn:x.payload.sn,item:x.payload.item,type:x.payload.pm_type,pic:x.payload.pic,result:'',findings:'',followup:false});
+  });
+  if(vPic==='Mine')rows=rows.filter(v=>(v.pic||[]).includes(myName())||String(v.id).startsWith('pending'));
+  if(vSt==='Open')rows=rows.filter(v=>!v.result);
+  if(vSt==='Done')rows=rows.filter(v=>v.result);
+  rows.sort((a,b)=>(a.d||'9999').localeCompare(b.d||'9999'));
+  $('pmbody').innerHTML=`
+   <div class="row" style="margin:2px 0 6px"><span class="dim">👤 ${esc(myName())} · <span class="click" style="color:var(--acc)" onclick="localStorage.removeItem('${NAME_LS}');render()">change</span></span>
+     <span class="dim click" style="color:var(--acc)" onclick="refreshVisits()">↻ refresh</span></div>
+   <div class="chips">${['Mine','All'].map(x=>`<button class="chip${vPic===x?' on':''}" onclick="vPic='${x}';render()">${x}</button>`).join('')}
+     ${['Open','Done','Everything'].map(x=>`<button class="chip${vSt===x?' on':''}" onclick="vSt='${x}';render()">${x}</button>`).join('')}</div>
+   <button class="btn" onclick="go('visitnew')">＋ New visit / schedule entry</button>
+   ${cache?`<div class="hint">Live schedule as of ${esc(cache.asof.slice(0,16).replace('T',' '))} UTC · ${rows.length} shown</div>`:'<div class="hint">No live data yet — tap ↻ refresh when online.</div>'}
+   <div id=list>${rows.map(vLine).join('')||'<div class=dim style=margin-top:10px>Nothing here. Change filters above, or create a new entry.</div>'}</div>`;
+  if(!cache)refreshVisits();
+}
+function picPicker(sel){
+  return `<div class="chips" id="picpick">${ACTIVE.map(n=>`<button class="chip${(sel||[]).includes(n)?' on':''}" onclick="this.classList.toggle('on')">${n}</button>`).join('')}</div>`;
+}
+const pickedPics=()=>[...document.querySelectorAll('#picpick .chip.on')].map(b=>b.textContent);
+function visitnew(){
+  const need=needIdentity(); if(need){go('pm');return}
+  const sites=[...new Set(DB.items.map(i=>i.site).filter(Boolean))].sort();
+  V().innerHTML=`<span class="back" onclick="goBack()">← Visit Log</span><h2>＋ New visit</h2>
+   <div class="hint">Creates a row in the PM Visit Log in Notion. Use this when no pre-created schedule row exists.</div>
+   <div class="fld"><label>PM Date</label><input type="date" id="f_date" value="${new Date().toISOString().slice(0,10)}"></div>
+   <div class="fld"><label>Site</label><input type="text" id="f_site" list="sitelist" placeholder="Start typing…"><datalist id="sitelist">${sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
+   <div class="fld"><label>Serial number (pick from Item Master via Serial tab, or type)</label><input type="text" id="f_sn" autocapitalize="characters" autocorrect="off"></div>
+   <div class="fld"><label>Item name (optional if serial given)</label><input type="text" id="f_item"></div>
+   <div class="fld"><label>PM type</label><select id="f_type">${PM_TYPES.map(t=>`<option>${t}</option>`).join('')}</select></div>
+   <div class="fld"><label>PIC (who will go)</label>${picPicker([myName()])}</div>
+   <button class="btn" onclick="submitNewVisit()">Save (queues if offline)</button>`;
+}
+function submitNewVisit(){
+  const date=$('f_date').value, site=$('f_site').value.trim(), sn=$('f_sn').value.trim(), item=$('f_item').value.trim();
+  if(!date||!site||(!sn&&!item)){alert('Date, site, and a serial or item name are required.');return}
+  enqueue('POST','/visit',{date,site,sn,item,pm_type:$('f_type').value,pic:pickedPics()},`New visit ${site} ${date}`);
+  go('pm');
+}
+const findVisit=id=>(getVisits()?.visits||[]).find(v=>v.id===id);
+function visitedit(id){
+  const v=findVisit(id); if(!v){go('pm');return}
+  V().innerHTML=`<span class="back" onclick="goBack()">← Visit Log</span><h2>📅 Reschedule</h2>
+   <div class="card"><h3>${esc(v.site)}</h3><div class="dim">${esc(v.item||'')} ${v.sn?('· '+esc(v.sn)):''}</div></div>
+   <div class="fld"><label>New PM date</label><input type="date" id="f_date" value="${esc(v.d||'')}"></div>
+   <div class="fld"><label>PIC</label>${picPicker(v.pic)}</div>
+   <button class="btn" onclick="submitReschedule('${v.id}')">Save (queues if offline)</button>`;
+}
+function submitReschedule(id){
+  const date=$('f_date').value, pic=pickedPics();
+  if(!date||!pic.length){alert('Date and at least one PIC required.');return}
+  const c=getVisits(); const v=c&&c.visits.find(x=>x.id===id);
+  if(v){v.d=date;v.pic=pic;localStorage.setItem(VISITS_LS,JSON.stringify(c));}
+  enqueue('PATCH','/visit/'+id,{set:{date,pic}},`Reschedule ${v?v.site:''} → ${date}`);
+  go('pm');
+}
+function logresult(id){
+  const v=findVisit(id); if(!v){go('pm');return}
+  V().innerHTML=`<span class="back" onclick="goBack()">← Visit Log</span><h2>✅ Log result</h2>
+   <div class="card"><h3>${esc(v.site)}</h3><div class="dim">${esc(v.d||'')} · ${esc(v.item||'')} ${v.sn?('· '+esc(v.sn)):''}</div></div>
+   <div class="fld"><label>Result</label><select id="f_res">${RESULTS.map(r=>`<option${v.result===r?' selected':''}>${r}</option>`).join('')}</select></div>
+   <div class="fld"><label>Findings / notes</label><textarea id="f_find">${esc(v.findings||'')}</textarea></div>
+   <div class="fld"><label class="rem" style="margin:0"><input type="checkbox" id="f_fu"${v.followup?' checked':''}> Follow-up CM needed</label></div>
+   <div class="fld"><label>Checked by</label><div class="chips" id="picpick">${ACTIVE.map(n=>`<button class="chip${(v.checked||[myName()]).includes(n)?' on':''}" onclick="this.classList.toggle('on')">${n}</button>`).join('')}</div></div>
+   <button class="btn" onclick="submitResult('${v.id}')">Save (queues if offline)</button>`;
+}
+function submitResult(id){
+  const set={result:$('f_res').value,findings:$('f_find').value.trim(),followup:$('f_fu').checked,checked:pickedPics()};
+  if(!set.checked.length)delete set.checked;
+  const c=getVisits(); const v=c&&c.visits.find(x=>x.id===id);
+  if(v){Object.assign(v,{result:set.result,findings:set.findings,followup:set.followup});localStorage.setItem(VISITS_LS,JSON.stringify(c));}
+  enqueue('PATCH','/visit/'+id,{set},`Result ${v?v.site:''}: ${set.result}`);
+  go('pm');
+}
+// ---- serial mismatch report ----
+function mismatch(sn){
+  const need=needIdentity();
+  if(need==='setkey'||need==='setname'){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span>`+identityCard();return}
+  if(need){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><div class="card"><div class="dim">${esc(need)}</div></div>`;return}
+  const i=DB.items.find(x=>x.sn===sn);
+  V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>🔁 Report serial mismatch</h2>
+   <div class="hint">Files an Asset Discrepancy Report — R verifies it, then the Item Master gets corrected. You are NOT editing the Item Master directly.</div>
+   ${i?`<div class="card"><h3>App expects</h3><div>${esc(i.sn)}</div><div class="dim">${esc(i.model||'')} · ${esc(i.site||'')} ${i.sysno?('· '+esc(i.sysno)):''}</div></div>`:''}
+   <div class="fld"><label>Site</label><input type="text" id="f_site" value="${esc(i?i.site:'')}"></div>
+   <div class="fld"><label>Serial number ON THE UNIT (what the label says)</label><input type="text" id="f_found" autocapitalize="characters" autocorrect="off"></div>
+   <div class="fld"><label>Machine type (as labelled)</label><input type="text" id="f_mach" value="${esc(i?(i.model||i.type||''):'')}"></div>
+   <div class="fld"><label>Notes (e.g. swapped with which unit, where found)</label><textarea id="f_notes"></textarea></div>
+   <button class="btn warn" onclick="submitMismatch(${JSON.stringify(i?i.sn:'').replace(/"/g,'&quot;')},${JSON.stringify(i?(i.title||''):'').replace(/"/g,'&quot;')})">Report (queues if offline)</button>`;
+}
+function submitMismatch(expSn,expTitle){
+  const site=$('f_site').value.trim(), found=$('f_found').value.trim();
+  if(!site||!found){alert('Site and the serial on the unit are required.');return}
+  enqueue('POST','/asset-report',{site,found,expected:(expTitle?expTitle+' / ':'')+(expSn||'(not in app)'),mach:$('f_mach').value.trim(),notes:$('f_notes').value.trim()},`Mismatch ${site}: ${found}`);
+  go('pm');
+}
+// ---- outbox screen ----
+function outbox(){
+  const box=getOutbox();
+  V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>⏳ Sync queue</h2>
+   <button class="btn sec" onclick="flushOutbox()">↻ Try to sync now</button>
+   ${box.slice().reverse().map(j=>`<div class="card${j.st!=='confirmed'?' pend':''}">
+     <div class="row"><h3>${esc(j.label)}</h3><span class="tag ${j.st==='confirmed'?'ok':(j.st==='failed'?'bad':'warn')}">${j.st}</span></div>
+     <div class="dim">${esc(j.ts.slice(0,16).replace('T',' '))}</div>
+     ${j.err?`<div class="dim" style="color:var(--bad)">${esc(j.err)}</div>`:''}
+     ${j.st==='failed'?`<button class="btn sm sec" onclick="retryJob('${j.uuid}')">Retry</button><button class="btn sm sec" onclick="dropJob('${j.uuid}')">Delete</button>`:''}
+   </div>`).join('')||'<div class=dim style=margin-top:10px>Queue is empty — everything synced.</div>'}`;
+}
+function retryJob(u){const b=getOutbox();const j=b.find(x=>x.uuid===u);if(j){j.st='queued';j.err='';setOutbox(b);flushOutbox();}render();}
+function dropJob(u){setOutbox(getOutbox().filter(x=>x.uuid!==u));render();}
 
 // ==================================================================
 //  ANALYSIS  (was KPI) — full CM data analysis (deck spec) + solo/collab
@@ -523,6 +750,19 @@ function histSearch(){
     .sort((a,b)=>b.d.localeCompare(a.d)).slice(0,30);
   $('list').innerHTML=rec.map(svcLine).join('')+`<div class="hint">Latest ${rec.length} shown. Full records live in Notion.</div>`;
 }
+
+// ---- V4: iOS install banner + sync triggers ----
+(function(){
+  const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent);
+  const standalone=navigator.standalone===true||matchMedia('(display-mode: standalone)').matches;
+  if(isIOS&&!standalone&&!localStorage.getItem('fw_iosbn')){
+    const d=document.createElement('div'); d.id='iosbanner';
+    d.innerHTML=`📲 <b>Install as an app:</b> tap <b>Share</b> → <b>Add to Home Screen</b>. Then open it from the icon and enter the password once — it works offline after that. <span style="color:var(--acc);cursor:pointer" onclick="localStorage.setItem('fw_iosbn','1');this.parentNode.remove()">Dismiss</span>`;
+    document.body.insertBefore(d,document.querySelector('main'));
+  }
+})();
+window.addEventListener('online',flushOutbox);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){flushOutbox();refreshVisits(true);}});
 
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 tryRemembered();
