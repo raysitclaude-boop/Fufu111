@@ -268,22 +268,112 @@ def build_svc():
     if len(svc) < 500: sys.exit("FATAL validation: CM records suspiciously few — aborting.")
     return svc
 
+# ---------------------------------------------------------------------------
+# PM source (V5.1): the official reference is the MONTHLY release database
+# R imports at the end of each month, e.g. "20260601_PM Schedule for Jun_Update.csv".
+# Each release is a NEW Notion database, so the build discovers them by title
+# pattern via the Notion search API (integration only sees what is shared with
+# it — share the parent page once and every monthly import under it is found).
+# The newest PM_RELEASES_TO_MERGE releases are merged (newest wins on the same
+# serial+date) so the boss report keeps ~3 months of history.
+# Fallback: if no release is found, use the old PM Master List with a window.
+# ---------------------------------------------------------------------------
+PM_TITLE_RE = re.compile(r"^(\d{8})_PM Schedule", re.I)   # 20260601_PM Schedule for Jun_Update
+PM_RELEASES_TO_MERGE = 4
+PM_MONTHS_BACK = 3   # fallback window only
+PM_MONTHS_FWD  = 6
+
+def _month_shift(dt, months):
+    y, m = dt.year, dt.month + months
+    y += (m - 1) // 12; m = (m - 1) % 12 + 1
+    return f"{y:04d}-{m:02d}"
+
+def find_monthly_pm_dbs():
+    """All shared databases whose title matches the monthly-release pattern,
+    newest first (by the YYYYMMDD filename prefix)."""
+    out, cursor = [], None
+    while True:
+        payload = {"query": "PM Schedule",
+                   "filter": {"property": "object", "value": "database"},
+                   "page_size": 100}
+        if cursor: payload["start_cursor"] = cursor
+        res = api("/search", payload)
+        for r in res.get("results", []):
+            if r.get("object") != "database": continue
+            title = "".join(t.get("plain_text", "") for t in r.get("title", [])).strip()
+            m = PM_TITLE_RE.match(title)
+            if m: out.append((m.group(1), r["id"], title))
+        if not res.get("has_more"): break
+        cursor = res.get("next_cursor")
+    out.sort(reverse=True)
+    return out
+
+def parse_sched_date(s):
+    """Monthly releases store Schedule Date as text: '30-6月-2026', '2026-06-30',
+    or '30/6/2026'. Return ISO YYYY-MM-DD, or '' if unparseable."""
+    s = str(s or "").strip()
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m: return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    m = re.match(r"^(\d{1,2})[-/](\d{1,2})月[-/](\d{4})", s)
+    if m: return f"{int(m.group(3)):04d}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})", s)
+    if m: return f"{int(m.group(3)):04d}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+    return ""
+
+def split_names(v):
+    """'Assigned to' is plain text in CSV imports ('Ray, Joe') but multi-select
+    in the master list — accept both."""
+    if isinstance(v, list): return [x for x in v if x]
+    return [x for x in re.split(r"[,;/、+&\s]+", str(v or "")) if x]
+
+def _pm_row(r):
+    p = r["properties"]
+    raw_d = prop(p, "Schedule Date")             # matches 'Schedule\nDate' too (norm())
+    return {"id": r["id"],                       # needed for tick-off writes
+            "site": prop(p, "End User"),
+            "d": parse_sched_date(raw_d) or (raw_d if isinstance(raw_d, str) else ""),
+            "item": prop(p, "Item Name"),
+            "sn": str(prop(p, "Serial Number")).strip(),
+            "pmno": prop(p, "PM no"),            # real name: "PM \nno"
+            "pic": split_names(prop(p, "Assigned to")),
+            "st": prop(p, "Status"),
+            "grp": prop(p, "Group"),
+            "addr": prop(p, "End User Address")}
+
 def build_pm():
-    print("Pulling PM Master List ...")
-    pm = []
+    print("Looking for monthly PM Schedule releases ...")
+    rels = find_monthly_pm_dbs()
+    if not rels:
+        print("  WARNING: no 'YYYYMMDD_PM Schedule…' database shared with the "
+              "integration — falling back to the PM Master List.")
+        return build_pm_master()
+    merged = {}
+    use = rels[:PM_RELEASES_TO_MERGE]
+    for datecode, dbid, title in use[::-1]:      # oldest → newest, newest wins
+        rows = query_db(dbid)
+        print(f"  release {title}: {len(rows)} rows")
+        for r in rows:
+            row = _pm_row(r)
+            key = (row["sn"] or r["id"], row["d"])
+            merged[key] = row
+    pm = list(merged.values())
+    nodate = sum(1 for x in pm if not x["d"])
+    print(f"  {len(pm)} PM rows merged from {len(use)} release(s)"
+          + (f" ({nodate} with unparseable dates)" if nodate else ""))
+    return pm
+
+def build_pm_master():
+    print("Pulling PM Master List (fallback) ...")
+    today = datetime.now(timezone(timedelta(hours=8)))
+    lo = _month_shift(today, -PM_MONTHS_BACK)
+    hi = _month_shift(today, PM_MONTHS_FWD)
+    pm, skipped = [], 0
     for r in query_db(DB_PM):
-        p = r["properties"]
-        pm.append({"id": r["id"],                     # V5: needed for tick-off writes
-                   "site": prop(p, "End User"),
-                   "d": prop(p, "Schedule Date"),      # real name has an embedded \n — norm() handles it
-                   "item": prop(p, "Item Name"),
-                   "sn": str(prop(p, "Serial Number")).strip(),
-                   "pmno": prop(p, "PM no"),           # real name: "PM \nno"
-                   "pic": aslist(prop(p, "Assigned to")),
-                   "st": prop(p, "Status"),
-                   "grp": prop(p, "Group"),
-                   "addr": prop(p, "End User Address")})
-    print(f"  {len(pm)} PM rows")
+        row = _pm_row(r)
+        if row["d"] and not (lo <= row["d"][:7] <= hi):
+            skipped += 1; continue
+        pm.append(row)
+    print(f"  {len(pm)} PM rows in window {lo}..{hi} ({skipped} outside window skipped)")
     return pm
 
 PN_RE = re.compile(r"\b([A-Z0-9][A-Z0-9\-]{4,})\b")
