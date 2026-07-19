@@ -90,12 +90,30 @@ details.proc .body{padding:6px 14px 14px}
 .okline{color:var(--ok);font-size:12.5px}
 #iosbanner{background:#141c24;border:1px solid var(--acc);border-radius:12px;padding:12px 14px;margin:10px 0;font-size:13px;color:var(--dim)}
 #iosbanner b{color:var(--tx)}
+/* ---- V5 additions ---- */
+.pmck{width:20px;height:20px;accent-color:var(--acc);flex:none;margin-top:2px}
+.pmrow{display:flex;gap:10px;align-items:flex-start}
+.pmrow>div{flex:1;min-width:0}
+.selbar{position:sticky;top:calc(44px + env(safe-area-inset-top));z-index:4;background:var(--bg);padding:6px 0}
+.grpcount{font-size:11.5px;color:var(--dim);font-weight:400}
+.rank1 .n{color:#ffd54f!important}
+.reptbl td,.reptbl th{font-variant-numeric:tabular-nums}
+.reptbl td:not(:first-child),.reptbl th:not(:first-child){text-align:right}
+@media print{
+  body{background:#fff;color:#000;padding:0;font-size:12px}
+  :root{--bg:#fff;--card:#fff;--line:#bbb;--tx:#000;--dim:#444;--acc:#01579b;--g2:#1b5e20;--warn:#e65100;--bad:#b71c1c}
+  header,nav,.chips,.subtabs,.noprint,#iosbanner{display:none!important}
+  .card,.kpi{border:1px solid #bbb;background:#fff;break-inside:avoid}
+  .bar-track{border:1px solid #999;background:#eee}
+  .insight{background:#f5f5f5;color:#333}
+  main{max-width:none;padding:0}
+}
 </style>
 </head>
 <body>
 <div id="gate">
   <h2>🧰 FUJI Field</h2>
-  <p>Enter the team password to unlock the offline data.</p>
+  <p>Enter your password to unlock the offline data.</p>
   <input type="password" id="pw" placeholder="Password" autocomplete="current-password">
   <label class="rem"><input type="checkbox" id="rem"> Remember on this device</label>
   <div class="err" id="gerr"></div>
@@ -112,7 +130,7 @@ details.proc .body{padding:6px 14px 14px}
   <button id="nb-analysis" onclick="go('analysis')"><span>📊</span>Analysis</button>
 </nav>
 <script>
-let DB=null, route={p:'sites'}, PREV=null, siteFilter='All';
+let DB=null, ROLE='admin', route={p:'sites'}, PREV=null, siteFilter='All';
 let fixTab='symptom', errMachine='goplus';
 const CARD_L2={artifacts:['Artifacts'],'charging-pins':['Charging Pins'],bcr:['Barcode Reader'],cable:['Cable/Connector'],handswitch:['Hand Switch','Wireless Hand Switch'],'charging-plug':['Charging Plug'],'collimator-handle':['Collimator Handle'],bumper:['Bumper'],wifi:['Wifi'],'wl-pacs':['WL and PACS'],'uu-settings':['UU Settings','SU Settings']};
 const $=id=>document.getElementById(id), V=()=>$('view');
@@ -167,21 +185,35 @@ async function deriveKey(pw,salt){
   const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']);
   return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:150000,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['decrypt']);
 }
+async function tryDecrypt(file,pw){
+  const r=await fetch(file); if(!r.ok)throw new Error('fetch');
+  const b=new Uint8Array(await r.arrayBuffer()), salt=b.slice(0,16), iv=b.slice(16,28), ct=b.slice(28);
+  const key=await deriveKey(pw,salt);
+  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv},key,ct);
+  return JSON.parse(new TextDecoder().decode(pt));
+}
 async function unlock(){
   $('gerr').textContent='';
-  try{
-    const pw=$('pw').value;
-    const buf=await (await fetch('data.enc')).arrayBuffer();
-    const b=new Uint8Array(buf), salt=b.slice(0,16), iv=b.slice(16,28), ct=b.slice(28);
-    const key=await deriveKey(pw,salt);
-    const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv},key,ct);
-    DB=JSON.parse(new TextDecoder().decode(pt));
-    if($('rem').checked) localStorage.setItem('fw_pw',pw);
-    boot();
-  }catch(e){ $('gerr').textContent='Wrong password (or data not reachable).'; }
+  const pw=$('pw').value;
+  try{ DB=await tryDecrypt('data.enc',pw); }
+  catch(e){
+    try{ DB=await tryDecrypt('dataw.enc',pw); }
+    catch(e2){ $('gerr').textContent='Wrong password (or data not reachable).'; return; }
+  }
+  if($('rem').checked) localStorage.setItem('fw_pw',pw);
+  boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-function boot(){$('gate').style.display='none';$('asof').textContent='Data: '+DB.asof;updateSyncBadge();flushOutbox();go('sites');}
+function boot(){
+  $('gate').style.display='none';
+  ['items','svc','pm','parts','cards','errors'].forEach(k=>DB[k]=DB[k]||[]);
+  DB.sectors=DB.sectors||{}; DB.procedures=DB.procedures||{};
+  ROLE=DB.role||'admin';
+  if(ROLE==='worker')['fix','parts','analysis'].forEach(k=>{const b=$('nb-'+k);if(b)b.style.display='none';});
+  $('asof').textContent='Data: '+DB.asof;
+  updateSyncBadge();flushOutbox();
+  go(ROLE==='worker'?'pm':'sites');
+}
 
 // ---------- shared render helpers ----------
 const activeItems=()=>DB.items.filter(i=>i.status!=='Retired');
@@ -204,7 +236,11 @@ function svcLine(s){
 }
 
 // ---------- router ----------
-function go(p,arg){ if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox'].includes(p))PREV=route; route={p,arg}; render(); window.scrollTo(0,0); }
+function go(p,arg){
+  if(ROLE==='worker'&&['fix','parts','analysis','card','part'].includes(p))p='pm';
+  if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox'].includes(p))PREV=route;
+  route={p,arg}; render(); window.scrollTo(0,0);
+}
 function render(){
   const map={item:'serial',site:'sites',card:'fix',part:'parts',visitnew:'pm',visitedit:'pm',logresult:'pm',mismatch:'serial',outbox:'pm'};
   ['sites','serial','fix','parts','pm','analysis'].forEach(k=>$('nb-'+k)?.classList.toggle('on',route.p===k||map[route.p]===k));
@@ -277,8 +313,8 @@ function item(sn){
    <div class="dim">${esc(i.site||'')} ${i.loc?('· '+esc(i.loc)):''}</div>${i.addr?`<div class="hint">${esc(i.addr)}</div>`:''}
    <button class="btn sec sm" onclick="go('mismatch',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">🔁 Serial on the unit is different? Report it</button></div>
    ${set.length?`<div class="sys">Same system set (${esc(i.sysno)})</div>`+set.map(x=>itemLine(x,false)).join(''):''}
-   <div class="sys">Service history (${hist.length})</div>
-   ${hist.length?hist.map(svcLine).join(''):'<div class=dim>No CM records reference this serial.</div>'}`;
+   ${ROLE==='worker'?'':`<div class="sys">Service history (${hist.length})</div>
+   ${hist.length?hist.map(svcLine).join(''):'<div class=dim>No CM records reference this serial.</div>'}`}`;
 }
 
 // ==================================================================
@@ -393,47 +429,98 @@ function part(key){
 // ==================================================================
 //  PM  →  sub-tabs: Visit Log (live, writable) | Master List (bundle)
 // ==================================================================
-let pmTab='visits', pmPic='All', pmSt='All', vPic='Mine', vSt='Open';
+let pmTab='sched', pmMonth=null, pmStF='Outstanding', pmGroup='pic', vPic='Mine', vSt='Open';
+const PMTICK_LS='fw_pmtick';
+const NA_ST=['No Need','Not Required','Closed','No Contract','No Info','On Hold'];
+const pmSel=new Set();
+const attr=o=>esc(JSON.stringify(o)).replace(/'/g,'&#39;');
+const getTicks=()=>JSON.parse(localStorage.getItem(PMTICK_LS)||'{}');
+const setTicks=o=>localStorage.setItem(PMTICK_LS,JSON.stringify(o));
 function pm(){
   V().innerHTML=`<div class="subtabs">
+     <button class="${pmTab==='sched'?'on':''}" onclick="pmTab='sched';pm()">🗂 Schedule</button>
      <button class="${pmTab==='visits'?'on':''}" onclick="pmTab='visits';pm()">📝 Visit Log</button>
-     <button class="${pmTab==='master'?'on':''}" onclick="pmTab='master';pm()">🗂 Master List</button>
    </div><div id=pmbody></div>`;
-  ({visits:pmVisits,master:pmMaster})[pmTab]();
+  ({sched:pmSched,visits:pmVisits})[pmTab]();
 }
-// --- Master List (read-only, from nightly bundle — unchanged V3 behaviour) ---
-function pmMaster(){
-  const pics=[...new Set(DB.pm.flatMap(x=>x.pic))].sort();
+// --- Schedule (from nightly bundle, tick = mark Completed in Notion) ---
+const pmCat=st=>st==='Completed'?'Completed':(NA_ST.includes(st)?'N/A':'Outstanding');
+function pmRows(){
+  const tk=getTicks(); let changed=false;
+  const rows=DB.pm.map(x=>{
+    if(x.id&&tk[x.id]){
+      if(x.st==='Completed'){delete tk[x.id];changed=true;return x;}
+      return {...x,st:'Completed',_pend:true};
+    }
+    return x;
+  });
+  if(changed)setTicks(tk);
+  return rows;
+}
+function pmSched(){
+  const rows=pmRows();
+  const months=[...new Set(rows.map(x=>x.d?x.d.slice(0,7):'').filter(Boolean))].sort();
+  if(pmMonth===null){const cur=new Date().toISOString().slice(0,7);pmMonth=months.includes(cur)?cur:(months[months.length-1]||'All');}
+  const flt=rows.filter(x=>(pmMonth==='All'||(x.d||'').startsWith(pmMonth))&&(pmStF==='All'||pmCat(x.st)===pmStF));
+  const groups={};
+  const keyfn=x=>pmGroup==='pic'?(x.pic&&x.pic.length?x.pic:['(unassigned)']):(pmGroup==='site'?[x.site||'(no site)']:[x.st||'(no status)']);
+  flt.forEach(x=>keyfn(x).forEach(k=>(groups[k]=groups[k]||[]).push(x)));
+  const keys=Object.keys(groups).sort();
+  const done=flt.filter(x=>x.st==='Completed').length;
+  const noId=flt.some(x=>!x.id);
   $('pmbody').innerHTML=`
-   <div class="chips">${['All','Jul Schedule','Outstanding','Waiting for Sign'].map(s=>`<button class="chip${pmSt===s?' on':''}" onclick="pmSt='${s}';pm()">${s}</button>`).join('')}</div>
-   <div class="chips">${['All',...pics].map(p=>`<button class="chip${pmPic===p?' on':''}" onclick="pmPic='${p.replace(/'/g,"\\'")}';pm()">${p}</button>`).join('')}</div>
-   <div id=list></div>`;
-  const rows=DB.pm.filter(x=>(pmSt==='All'||x.st===pmSt)&&(pmPic==='All'||x.pic.includes(pmPic)));
-  const byMonth={};
-  rows.forEach(x=>{const m=x.d?x.d.slice(0,7):'(no date)';(byMonth[m]=byMonth[m]||[]).push(x)});
-  const months=Object.keys(byMonth).sort();
-  $('list').innerHTML=months.map(m=>`<div class="sys">📅 ${m}</div>`+byMonth[m].map(pmLine).join('')).join('')||'<div class=dim style=margin-top:10px>No PM rows match.</div>';
+   <div class="chips">${['All',...months].map(m=>`<button class="chip${pmMonth===m?' on':''}" onclick="pmMonth='${m}';pmSel.clear();pm()">${m==='All'?'All months':m}</button>`).join('')}</div>
+   <div class="chips">${['Outstanding','Completed','N/A','All'].map(s=>`<button class="chip${pmStF===s?' on':''}" onclick="pmStF='${s}';pmSel.clear();pm()">${s}</button>`).join('')}</div>
+   <div class="chips"><span class="dim" style="align-self:center">Group by</span>${[['pic','👤 PIC'],['site','🏥 Hospital'],['st','🏷 Status']].map(([k,l])=>`<button class="chip${pmGroup===k?' on':''}" onclick="pmGroup='${k}';pm()">${l}</button>`).join('')}</div>
+   <div class="hint">${flt.length} rows · ${done} completed, ${flt.length-done} not. A tick marks the row <b>Completed</b> in Notion — use the Visit Log only when something abnormal was found.</div>
+   ${noId?'<div class="hint" style="color:var(--warn)">⚠ Rows from an old data snapshot can’t be ticked yet — they will after the next nightly refresh.</div>':''}
+   <div id=selbar class="selbar" style="display:none"><button class="btn" onclick="tickSelected()">✓ Mark selected as Completed (<span id=seln></span>)</button></div>
+   ${keys.map(k=>{const g=groups[k],gd=g.filter(x=>x.st==='Completed').length;
+     return `<div class="sys">${pmGroup==='pic'?'👤':(pmGroup==='site'?'🏥':'🏷')} ${esc(k)} <span class="grpcount">· ${gd}/${g.length} done</span></div>`+g.map(pmSchedLine).join('');}).join('')||'<div class=dim style=margin-top:10px>No PM rows match.</div>'}`;
+  updateSelbar();
 }
-function pmLine(x){
-  const st=x.st==='Outstanding'?'bad':(x.st==='Waiting for Sign'?'warn':'ok');
-  return `<div class="card"><div class="row"><h3>${esc(x.site)}</h3><span class="dim">${esc(x.d)}</span></div>
+function pmSchedLine(x){
+  const cat=pmCat(x.st);
+  const st=cat==='Completed'?'ok':(cat==='N/A'?'warn':'bad');
+  const canTick=!!x.id&&cat!=='Completed';
+  return `<div class="card"><div class="pmrow">
+   ${canTick?`<input type="checkbox" class="pmck" ${pmSel.has(x.id)?'checked':''} onchange="selPM('${esc(x.id)}',this.checked)">`:''}
+   <div>
+   <div class="row"><h3>${esc(x.site)}</h3><span class="dim">${esc(x.d)}</span></div>
    <div class="dim">${esc(x.item)} · <span class="click" style="color:var(--acc)" onclick="go('item',${JSON.stringify(x.sn).replace(/"/g,'&quot;')})">${esc(x.sn)}</span> · PM ${esc(x.pmno)}</div>
-   <div>${x.pic.map(p=>`<span class="tag">👤 ${esc(p)}</span>`).join('')}<span class="tag ${st}">${esc(x.st)}</span><span class="tag">${esc(x.grp)}</span></div>
-   ${x.addr?`<div class="hint">${esc(x.addr)}</div>`:''}</div>`;
+   <div>${(x.pic||[]).map(p=>`<span class="tag">👤 ${esc(p)}</span>`).join('')}<span class="tag ${st}">${esc(x.st)}</span><span class="tag">${esc(x.grp)}</span>${x._pend?'<span class="tag warn">⏳ syncing</span>':''}</div>
+   ${x.addr?`<div class="hint">${esc(x.addr)}</div>`:''}
+   ${canTick?`<div><button class="btn sm" onclick='tickPM([${attr(x.id)}])'>✓ Done</button><button class="btn sm sec" onclick='go("visitnew",${attr({site:x.site,sn:x.sn,item:x.item,id:x.id,abn:1})})'>⚠ Abnormal</button></div>`:''}
+   </div></div></div>`;
+}
+function selPM(id,on){if(on)pmSel.add(id);else pmSel.delete(id);updateSelbar();}
+function updateSelbar(){const b=$('selbar');if(!b)return;b.style.display=pmSel.size?'':'none';const n=$('seln');if(n)n.textContent=pmSel.size;}
+function tickSelected(){tickPM([...pmSel]);}
+function tickPM(ids){
+  const need=needIdentity();
+  if(need==='setkey'||need==='setname'){$('pmbody').innerHTML=identityCard()+'<div class="hint">One-time setup — then tick again.</div>';return}
+  if(need){alert(need);return}
+  const tk=getTicks(), name=myName();
+  ids.forEach(id=>{
+    const x=DB.pm.find(r=>r.id===id); if(!x)return;
+    tk[id]={by:name,ts:Date.now()};
+    enqueue('PATCH','/pm/'+id,{set:{status:'Completed',checked:[name]}},`PM done ${x.site} ${x.sn||x.item||''}`);
+  });
+  setTicks(tk); pmSel.clear(); if(route.p==='pm')pm();
 }
 
 // ================= V4: identity, outbox, live visits =================
 const uid=()=>crypto.randomUUID?crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2));
 const myName=()=>localStorage.getItem(NAME_LS)||'';
-const writeKey=()=>localStorage.getItem(WRITE_KEY_LS)||'';
+const writeKey=()=>(DB&&DB.wkey)||localStorage.getItem(WRITE_KEY_LS)||'';
 function needIdentity(){ if(!workerReady())return 'Worker URL not configured yet — ask R.'; if(!writeKey())return 'setkey'; if(!myName())return 'setname'; return null; }
 function identityCard(){
   return `<div class="card"><h3>⚙️ Setup</h3>
     <div class="fld"><label>Your name (stamped on every entry you submit)</label>
       <div class="chips">${ACTIVE.map(n=>`<button class="chip${myName()===n?' on':''}" onclick="localStorage.setItem('${NAME_LS}','${n}');render()">${n}</button>`).join('')}</div></div>
-    <div class="fld"><label>Team write key (get it from R — not the data password)</label>
+    ${DB&&DB.wkey?'':`<div class="fld"><label>Team write key (get it from R — not the data password)</label>
       <input type="text" id="wkey" value="${esc(writeKey())}" placeholder="Write key" autocapitalize="off" autocorrect="off">
-      <button class="btn sm sec" onclick="localStorage.setItem('${WRITE_KEY_LS}',$('wkey').value.trim());render()">Save key</button></div></div>`;
+      <button class="btn sm sec" onclick="localStorage.setItem('${WRITE_KEY_LS}',$('wkey').value.trim());render()">Save key</button></div>`}</div>`;
 }
 // ---- outbox (offline write queue) ----
 const getOutbox=()=>JSON.parse(localStorage.getItem(OUTBOX_LS)||'[]');
@@ -463,7 +550,7 @@ async function flushOutbox(){
     box=getOutbox().filter(x=>x.st!=='confirmed'||(Date.now()-new Date(x.ts))<3*86400e3);
     setOutbox(box);
     if(getOutbox().every(x=>x.st==='confirmed')) refreshVisits(true);
-  } finally{ flushing=false; if(route.p==='pm'&&pmTab==='visits')render(); }
+  } finally{ flushing=false; if(route.p==='pm')render(); }
 }
 function updateSyncBadge(){
   const n=getOutbox().filter(x=>x.st!=='confirmed').length;
@@ -523,23 +610,42 @@ function picPicker(sel){
   return `<div class="chips" id="picpick">${ACTIVE.map(n=>`<button class="chip${(sel||[]).includes(n)?' on':''}" onclick="this.classList.toggle('on')">${n}</button>`).join('')}</div>`;
 }
 const pickedPics=()=>[...document.querySelectorAll('#picpick .chip.on')].map(b=>b.textContent);
-function visitnew(){
+let VN_PRE=null;
+function visitnew(pre){
   const need=needIdentity(); if(need){go('pm');return}
+  pre=VN_PRE=(pre||null);
+  const abn=!!(pre&&pre.abn);
   const sites=[...new Set(DB.items.map(i=>i.site).filter(Boolean))].sort();
-  V().innerHTML=`<span class="back" onclick="goBack()">← Visit Log</span><h2>＋ New visit</h2>
-   <div class="hint">Creates a row in the PM Visit Log in Notion. Use this when no pre-created schedule row exists.</div>
+  V().innerHTML=`<span class="back" onclick="goBack()">← ${abn?'Schedule':'Visit Log'}</span><h2>${abn?'⚠ Log abnormal visit':'＋ New visit'}</h2>
+   <div class="hint">${abn?'Files the visit in the PM Visit Log with your findings. If the serial number on the unit is wrong, use “Report serial mismatch” on the item page instead.':'Creates a row in the PM Visit Log in Notion. Use this when no pre-created schedule row exists.'}</div>
    <div class="fld"><label>PM Date</label><input type="date" id="f_date" value="${new Date().toISOString().slice(0,10)}"></div>
-   <div class="fld"><label>Site</label><input type="text" id="f_site" list="sitelist" placeholder="Start typing…"><datalist id="sitelist">${sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
-   <div class="fld"><label>Serial number (pick from Item Master via Serial tab, or type)</label><input type="text" id="f_sn" autocapitalize="characters" autocorrect="off"></div>
-   <div class="fld"><label>Item name (optional if serial given)</label><input type="text" id="f_item"></div>
+   <div class="fld"><label>Site</label><input type="text" id="f_site" list="sitelist" placeholder="Start typing…" value="${esc(pre?pre.site||'':'')}"><datalist id="sitelist">${sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
+   <div class="fld"><label>Serial number (pick from Item Master via Serial tab, or type)</label><input type="text" id="f_sn" autocapitalize="characters" autocorrect="off" value="${esc(pre?pre.sn||'':'')}"></div>
+   <div class="fld"><label>Item name (optional if serial given)</label><input type="text" id="f_item" value="${esc(pre?pre.item||'':'')}"></div>
    <div class="fld"><label>PM type</label><select id="f_type">${PM_TYPES.map(t=>`<option>${t}</option>`).join('')}</select></div>
-   <div class="fld"><label>PIC (who will go)</label>${picPicker([myName()])}</div>
-   <button class="btn" onclick="submitNewVisit()">Save (queues if offline)</button>`;
+   <div class="fld"><label>PIC (who went)</label>${picPicker([myName()])}</div>
+   ${abn?`<div class="fld"><label>Result</label><select id="f_res">${RESULTS.map(r=>`<option${r==='Completed with findings'?' selected':''}>${r}</option>`).join('')}</select></div>
+   <div class="fld"><label>Findings — what was abnormal?</label><textarea id="f_find"></textarea></div>
+   <div class="fld"><label class="rem" style="margin:0"><input type="checkbox" id="f_fu"> Follow-up CM needed</label></div>`:''}
+   <button class="btn${abn?' warn':''}" onclick="submitNewVisit(${abn?1:0})">Save (queues if offline)</button>`;
 }
-function submitNewVisit(){
+function submitNewVisit(abn){
   const date=$('f_date').value, site=$('f_site').value.trim(), sn=$('f_sn').value.trim(), item=$('f_item').value.trim();
   if(!date||!site||(!sn&&!item)){alert('Date, site, and a serial or item name are required.');return}
-  enqueue('POST','/visit',{date,site,sn,item,pm_type:$('f_type').value,pic:pickedPics()},`New visit ${site} ${date}`);
+  const payload={date,site,sn,item,pm_type:$('f_type').value,pic:pickedPics()};
+  if(abn){
+    payload.result=$('f_res').value;
+    payload.findings=$('f_find').value.trim();
+    payload.followup=$('f_fu').checked;
+    if(!payload.findings){alert('Describe what was abnormal in Findings.');return}
+  }
+  enqueue('POST','/visit',payload,`${abn?'Abnormal visit':'New visit'} ${site} ${date}`);
+  // abnormal visit on a schedule row that was still completed → also tick the schedule
+  if(abn&&VN_PRE&&VN_PRE.id&&payload.result.startsWith('Completed')){
+    const tk=getTicks(); tk[VN_PRE.id]={by:myName(),ts:Date.now()}; setTicks(tk);
+    enqueue('PATCH','/pm/'+VN_PRE.id,{set:{status:'Completed',checked:[myName()]}},`PM done ${site} ${sn||item}`);
+  }
+  VN_PRE=null;
   go('pm');
 }
 const findVisit=id=>(getVisits()?.visits||[]).find(v=>v.id===id);
@@ -617,7 +723,7 @@ function dropJob(u){setOutbox(getOutbox().filter(x=>x.uuid!==u));render();}
 //  ANALYSIS  (was KPI) — full CM data analysis (deck spec) + solo/collab
 // ==================================================================
 let anYear='2026', anSec='overview';
-const AN_SECS=[['overview','Overview'],['sites','Sites'],['people','People'],['problems','Problems'],['rootcause','Root cause'],['quality','Quality']];
+const AN_SECS=[['report','📄 Report'],['overview','Overview'],['sites','Sites'],['people','People'],['problems','Problems'],['rootcause','Root cause'],['quality','Quality']];
 const C_SERIES=['var(--acc)','var(--g2)','var(--warn)','#a87bff','#19c2c2','#ff7eb6'];
 const anRows=()=>DB.svc.filter(s=>anYear==='All'||(s.d||'').startsWith(anYear));
 const hasRv=()=>DB.svc.some(s=>s.rv);
@@ -644,7 +750,51 @@ function analysis(){
    <div class="chips">${AN_SECS.map(([k,l])=>`<button class="chip${anSec===k?' on':''}" onclick="anSec='${k}';analysis()">${l}</button>`).join('')}</div>
    <div class="chips">${['2025','2026','All'].map(y=>`<button class="chip${anYear===y?' on':''}" onclick="anYear='${y}';analysis()">${y==='All'?'All time':y}</button>`).join('')}</div>
    <div id=ansec></div>`;
-  ({overview:anOverview,sites:anSites,people:anPeople,problems:anProblems,rootcause:anRoot,quality:anQuality})[anSec]();
+  ({report:anReport,overview:anOverview,sites:anSites,people:anPeople,problems:anProblems,rootcause:anRoot,quality:anQuality})[anSec]();
+}
+// ---- V5: monthly report for management ----
+let repMonth=null;
+function anReport(){
+  const PMR=pmRows();
+  const svcMs=DB.svc.map(s=>(s.d||'').slice(0,7)).filter(Boolean);
+  const pmMs=PMR.map(x=>x.d?x.d.slice(0,7):'').filter(Boolean);
+  const months=[...new Set([...svcMs,...pmMs])].sort();
+  if(!months.length){$('ansec').innerHTML='<div class=dim>No data.</div>';return}
+  if(repMonth===null||!months.includes(repMonth)){const cur=new Date().toISOString().slice(0,7);repMonth=months.includes(cur)?cur:months[months.length-1];}
+  const idx=months.indexOf(repMonth), last3=months.slice(Math.max(0,idx-2),idx+1);
+  const cmN=m=>DB.svc.filter(s=>(s.d||'').startsWith(m)).length;
+  const pmSched2=m=>PMR.filter(x=>(x.d||'').startsWith(m)&&pmCat(x.st)!=='N/A');
+  const pmDone=m=>pmSched2(m).filter(x=>x.st==='Completed').length;
+  const mx=Math.max(...last3.map(m=>Math.max(cmN(m),pmSched2(m).length)),1);
+  const chart=last3.map(m=>`
+    <div style="margin:9px 0 2px;font-weight:600;font-size:12.5px">${m}${m===repMonth?' ◀':''}</div>
+    ${barSimple('CM',cmN(m),mx,'var(--acc)')}
+    ${barSimple('PM done',pmDone(m),mx,'var(--g2)')}
+    ${barSimple('PM sched',pmSched2(m).length,mx,'#5c6f80')}`).join('');
+  const cmBy={},pmBy={};
+  DB.svc.filter(s=>(s.d||'').startsWith(repMonth)).forEach(s=>(s.pic||[]).forEach(p=>cmBy[p]=(cmBy[p]||0)+1));
+  pmSched2(repMonth).forEach(x=>(x.pic||[]).forEach(p=>{const e=pmBy[p]=pmBy[p]||{a:0,c:0};e.a++;if(x.st==='Completed')e.c++;}));
+  const names=[...new Set([...Object.keys(cmBy),...Object.keys(pmBy)])];
+  const cmTot=Object.values(cmBy).reduce((a,b)=>a+b,0);
+  const rows=names.map(n=>{const cm=cmBy[n]||0,p=pmBy[n]||{a:0,c:0};
+    return {n,cm,cmPct:cmTot?Math.round(100*cm/cmTot):0,pmA:p.a,pmC:p.c,pmPct:p.a?Math.round(100*p.c/p.a):null,tot:cm+p.c};})
+    .sort((a,b)=>b.tot-a.tot||b.cm-a.cm);
+  rows.forEach((r,i)=>{r.rank=(i&&r.tot===rows[i-1].tot)?rows[i-1].rank:i+1;});
+  const sch=pmSched2(repMonth);
+  $('ansec').innerHTML=`
+   <div class="chips noprint">${months.slice(-6).map(m=>`<button class="chip${repMonth===m?' on':''}" onclick="repMonth='${m}';analysis()">${m}</button>`).join('')}</div>
+   <div class="row"><h2 style="font-size:16px">📄 Monthly Report — ${repMonth}</h2><button class="btn sm sec noprint" onclick="window.print()">🖨 Print / PDF</button></div>
+   <div class="kpis">
+     <div class="kpi"><div class="n">${cmN(repMonth)}</div><div class="l">CM cases in ${repMonth}</div></div>
+     <div class="kpi"><div class="n g">${pmDone(repMonth)} / ${sch.length}</div><div class="l">PM completed / scheduled (${sch.length?Math.round(100*pmDone(repMonth)/sch.length):0}%)</div></div>
+   </div>
+   <div class="card"><h3>Last 3 months — CM &amp; PM volume</h3>${chart}</div>
+   <div class="card"><h3>By engineer (PIC) — ${repMonth}</h3>
+    <div class="caltbl"><table class="reptbl"><tr><th>Rank</th><th style="text-align:left">PIC</th><th>CM</th><th>CM %</th><th>PM done</th><th>PM sched</th><th>PM %</th><th>Total</th></tr>
+    ${rows.map(r=>`<tr><td>${r.rank}</td><td style="text-align:left">${esc(r.n)}</td><td>${r.cm}</td><td>${r.cmPct}%</td><td>${r.pmC}</td><td>${r.pmA}</td><td>${r.pmPct===null?'—':r.pmPct+'%'}</td><td><b>${r.tot}</b></td></tr>`).join('')||'<tr><td colspan=8 class=dim>No PIC data this month.</td></tr>'}
+    </table></div>
+    <div class="hint">CM % = share of the team's ${cmTot} CM cases this month. PM % = completed ÷ scheduled. Rank = CM cases + PM completed (ties share a rank).</div></div>
+   <div class="hint">Source: offline snapshot (${esc(DB.asof)}) + ticks queued on this device. Print → “Save as PDF” to send.</div>`;
 }
 function anOverview(){
   const rows=anRows();
