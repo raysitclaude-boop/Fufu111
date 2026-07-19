@@ -1,4 +1,6 @@
-# Place at .github/workflows/nightly.yml in the repo
+# Place at .github/workflows/nightly.yml in the repo (replaces the old one).
+# V5: adds WORKER_PW (worker-account bundle) + WRITE_KEY (embedded write key),
+#     commits dataw.enc alongside data.enc.
 name: Nightly data refresh
 on:
   schedule: [{cron: "0 20 * * *"}]   # 04:00 HKT
@@ -15,10 +17,15 @@ jobs:
       - run: python3 build/pull_notion.py
         env: {NOTION_TOKEN: "${{ secrets.NOTION_TOKEN }}"}
       - run: python3 build/encrypt_bundle.py
-        env: {FIELD_PW: "${{ secrets.FIELD_PW }}"}
-      - name: Commit refreshed bundle (raw JSON never committed)
+        env:
+          FIELD_PW: "${{ secrets.FIELD_PW }}"
+          WORKER_PW: "${{ secrets.WORKER_PW }}"
+          WRITE_KEY: "${{ secrets.WRITE_KEY }}"
+      - name: Commit refreshed bundles (raw JSON never committed)
         run: |
           rm -f data/*.json
           git config user.name bot && git config user.email bot@local
-          git add data.enc && git commit -m "nightly data refresh" || echo "no change"
+          git add data.enc
+          git add dataw.enc || true
+          git commit -m "nightly data refresh" || echo "no change"
           git push
