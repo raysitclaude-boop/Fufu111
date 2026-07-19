@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-pull_notion.py — nightly data pull for the FUJI Field PWA (V3 read-only bundle).
+pull_notion.py — nightly data pull for the FUJI Field PWA (V5 bundle).
 
-Rebuilt 2026-07-18 (original was never committed to the repo — this restores the
-nightly refresh). Runs inside GitHub Actions:
+V5 change (2026-07-19): PM rows now include the Notion page id ("id") so the
+app can tick a schedule row as Completed through the write proxy.
+
+Runs inside GitHub Actions:
 
     env NOTION_TOKEN  = Notion internal-integration token (repo secret)
     output            = data/bundle.json   (raw, NEVER committed — encrypt_bundle.py
-                        turns it into data.enc, workflow deletes data/*.json)
+                        turns it into data.enc + dataw.enc, workflow deletes data/*.json)
 
 Design rules (KB_PWA_Architecture_Spec.md §2.3, binding):
   * ALLOWLIST: only the data sources / pages enumerated below are pulled.
@@ -18,7 +20,7 @@ Design rules (KB_PWA_Architecture_Spec.md §2.3, binding):
 Bundle schema (must match index.html):
   asof, items[], sectors{}, svc[], pm[], parts[], cards[], errors[], procedures{}
 
-Stdlib only (urllib) except nothing — `cryptography` is only needed by encrypt_bundle.py.
+Stdlib only (urllib) — `cryptography` is only needed by encrypt_bundle.py.
 """
 
 import json, os, re, sys, time, urllib.request, urllib.error
@@ -271,7 +273,8 @@ def build_pm():
     pm = []
     for r in query_db(DB_PM):
         p = r["properties"]
-        pm.append({"site": prop(p, "End User"),
+        pm.append({"id": r["id"],                     # V5: needed for tick-off writes
+                   "site": prop(p, "End User"),
                    "d": prop(p, "Schedule Date"),      # real name has an embedded \n — norm() handles it
                    "item": prop(p, "Item Name"),
                    "sn": str(prop(p, "Serial Number")).strip(),
