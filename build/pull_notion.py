@@ -326,10 +326,21 @@ def split_names(v):
     if isinstance(v, list): return [x for x in v if x]
     return [x for x in re.split(r"[,;/、+&\s]+", str(v or "")) if x]
 
-def _pm_row(r):
+MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+def release_label(datecode):
+    """'20260601' -> 'Jun 2026' — the month the release is FOR."""
+    try:
+        return f"{MON_ABBR[int(datecode[4:6]) - 1]} {datecode[:4]}"
+    except Exception:
+        return datecode
+
+def _pm_row(r, rel=""):
     p = r["properties"]
     raw_d = prop(p, "Schedule Date")             # matches 'Schedule\nDate' too (norm())
-    return {"id": r["id"],                       # needed for tick-off writes
+    return {"rel": rel,                          # which monthly release this row came from
+            "id": r["id"],                       # needed for tick-off writes
             "site": prop(p, "End User"),
             "d": parse_sched_date(raw_d) or (raw_d if isinstance(raw_d, str) else ""),
             "item": prop(p, "Item Name"),
@@ -351,15 +362,19 @@ def build_pm():
     use = rels[:PM_RELEASES_TO_MERGE]
     for datecode, dbid, title in use[::-1]:      # oldest → newest, newest wins
         rows = query_db(dbid)
-        print(f"  release {title}: {len(rows)} rows")
+        label = release_label(datecode)
+        print(f"  release {title} -> '{label}': {len(rows)} rows")
         for r in rows:
-            row = _pm_row(r)
+            row = _pm_row(r, label)
             key = (row["sn"] or r["id"], row["d"])
             merged[key] = row
     pm = list(merged.values())
     nodate = sum(1 for x in pm if not x["d"])
+    bystat = {}
+    for x in pm: bystat[f'{x["rel"]} / {x["st"]}'] = bystat.get(f'{x["rel"]} / {x["st"]}', 0) + 1
     print(f"  {len(pm)} PM rows merged from {len(use)} release(s)"
           + (f" ({nodate} with unparseable dates)" if nodate else ""))
+    for k in sorted(bystat): print(f"    {k}: {bystat[k]}")
     return pm
 
 def build_pm_master():
