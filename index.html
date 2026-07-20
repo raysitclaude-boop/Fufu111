@@ -429,7 +429,7 @@ function part(key){
 // ==================================================================
 //  PM  →  sub-tabs: Visit Log (live, writable) | Master List (bundle)
 // ==================================================================
-let pmTab='sched', pmMonth=null, pmStF='Outstanding', pmGroup='pic', vPic='Mine', vSt='Open';
+let pmTab='sched', pmMonth=null, pmRel=null, pmStF='All', pmGroup='pic', vPic='Mine', vSt='Open';
 const PMTICK_LS='fw_pmtick';
 const NA_ST=['No Need','Not Required','Closed','No Contract','No Info','On Hold'];
 const pmSel=new Set();
@@ -457,26 +457,44 @@ function pmRows(){
   if(changed)setTicks(tk);
   return rows;
 }
+const RELN=r=>{const m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(String(r).slice(0,3));
+  return m<0?'0000-00':`${String(r).slice(-4)}-${String(m+1).padStart(2,'0')}`;};
 function pmSched(){
   const rows=pmRows();
-  const months=[...new Set(rows.map(x=>x.d?x.d.slice(0,7):'').filter(Boolean))].sort();
-  if(pmMonth===null){const cur=new Date().toISOString().slice(0,7);pmMonth=months.includes(cur)?cur:(months[months.length-1]||'All');}
-  const flt=rows.filter(x=>(pmMonth==='All'||(x.d||'').startsWith(pmMonth))&&(pmStF==='All'||pmCat(x.st)===pmStF));
+  // Primary category = the monthly release the row came from (your official file).
+  // Fallback to schedule-month chips for old bundles that have no release tag.
+  const rels=[...new Set(rows.map(x=>x.rel).filter(Boolean))].sort((a,b)=>RELN(b).localeCompare(RELN(a)));
+  const byRel=rels.length>0;
+  const cats=byRel?rels:[...new Set(rows.map(x=>x.d?x.d.slice(0,7):'').filter(Boolean))].sort().reverse();
+  const curCat=()=>byRel?pmRel:pmMonth;
+  if(byRel){ if(pmRel===null||(pmRel!=='All'&&!rels.includes(pmRel)))pmRel=rels[0]||'All'; }
+  else if(pmMonth===null){const cur=new Date().toISOString().slice(0,7);pmMonth=cats.includes(cur)?cur:(cats[0]||'All');}
+  const c=curCat();
+  const inCat=x=>c==='All'||(byRel?x.rel===c:(x.d||'').startsWith(c));
+  // Status chips come from YOUR data ("Jun Schedule", "Outstanding", …), not invented buckets
+  const stats=[...new Set(rows.filter(inCat).map(x=>x.st).filter(Boolean))]
+    .sort((a,b)=>(/schedule/i.test(b)?1:0)-(/schedule/i.test(a)?1:0)||a.localeCompare(b));
+  const flt=rows.filter(x=>inCat(x)&&(pmStF==='All'||x.st===pmStF));
   const groups={};
-  const keyfn=x=>pmGroup==='pic'?(x.pic&&x.pic.length?x.pic:['(unassigned)']):(pmGroup==='site'?[x.site||'(no site)']:[x.st||'(no status)']);
+  const keyfn=x=>pmGroup==='pic'?(x.pic&&x.pic.length?x.pic:['(unassigned)']):
+    (pmGroup==='site'?[x.site||'(no site)']:(pmGroup==='month'?[(x.d||'(no date)').slice(0,7)]:[x.st||'(no status)']));
   flt.forEach(x=>keyfn(x).forEach(k=>(groups[k]=groups[k]||[]).push(x)));
   const keys=Object.keys(groups).sort();
   const done=flt.filter(x=>x.st==='Completed').length;
+  const na=flt.filter(x=>pmCat(x.st)==='N/A').length;
   const noId=flt.some(x=>!x.id);
+  const setCat=byRel?'pmRel':'pmMonth';
+  const gicon={pic:'👤',site:'🏥',st:'🏷',month:'📅'}[pmGroup];
   $('pmbody').innerHTML=`
-   <div class="chips">${['All',...months].map(m=>`<button class="chip${pmMonth===m?' on':''}" onclick="pmMonth='${m}';pmSel.clear();pm()">${m==='All'?'All months':m}</button>`).join('')}</div>
-   <div class="chips">${['Outstanding','Completed','N/A','All'].map(s=>`<button class="chip${pmStF===s?' on':''}" onclick="pmStF='${s}';pmSel.clear();pm()">${s}</button>`).join('')}</div>
-   <div class="chips"><span class="dim" style="align-self:center">Group by</span>${[['pic','👤 PIC'],['site','🏥 Hospital'],['st','🏷 Status']].map(([k,l])=>`<button class="chip${pmGroup===k?' on':''}" onclick="pmGroup='${k}';pm()">${l}</button>`).join('')}</div>
-   <div class="hint">${flt.length} rows · ${done} completed, ${flt.length-done} not. A tick marks the row <b>Completed</b> in Notion — use the Visit Log only when something abnormal was found.</div>
+   <div class="chips">${[...cats,'All'].map(m=>`<button class="chip${c===m?' on':''}" onclick="${setCat}='${m}';pmStF='All';pmSel.clear();pm()">${m==='All'?(byRel?'All releases':'All months'):esc(byRel?m+' release':m)}</button>`).join('')}</div>
+   <div class="chips">${['All',...stats].map(s=>`<button class="chip${pmStF===s?' on':''}" onclick="pmStF='${s.replace(/'/g,"\\'")}';pmSel.clear();pm()">${esc(s)}</button>`).join('')}</div>
+   <div class="chips"><span class="dim" style="align-self:center">Group by</span>${[['pic','👤 PIC'],['site','🏥 Hospital'],['st','🏷 Status'],['month','📅 Month']].map(([k,l])=>`<button class="chip${pmGroup===k?' on':''}" onclick="pmGroup='${k}';pm()">${l}</button>`).join('')}</div>
+   <div class="hint">${flt.length} rows · ${done} completed, ${flt.length-done-na} still to do${na?', '+na+' n/a':''}. A tick marks the row <b>Completed</b> in Notion — use the Visit Log only when something abnormal was found.</div>
+   ${byRel?'':'<div class="hint" style="color:var(--warn)">⚠ This data snapshot has no monthly-release tags — showing schedule months instead. Run the nightly build after uploading the new pull_notion.py.</div>'}
    ${noId?'<div class="hint" style="color:var(--warn)">⚠ Rows from an old data snapshot can’t be ticked yet — they will after the next nightly refresh.</div>':''}
    <div id=selbar class="selbar" style="display:none"><button class="btn" onclick="tickSelected()">✓ Mark selected as Completed (<span id=seln></span>)</button></div>
    ${keys.map(k=>{const g=groups[k],gd=g.filter(x=>x.st==='Completed').length;
-     return `<div class="sys">${pmGroup==='pic'?'👤':(pmGroup==='site'?'🏥':'🏷')} ${esc(k)} <span class="grpcount">· ${gd}/${g.length} done</span></div>`+g.map(pmSchedLine).join('');}).join('')||'<div class=dim style=margin-top:10px>No PM rows match.</div>'}`;
+     return `<div class="sys">${gicon} ${esc(k)} <span class="grpcount">· ${gd}/${g.length} done</span></div>`+g.map(pmSchedLine).join('');}).join('')||'<div class=dim style=margin-top:10px>No PM rows match.</div>'}`;
   updateSelbar();
 }
 function pmSchedLine(x){
