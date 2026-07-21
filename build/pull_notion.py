@@ -291,7 +291,7 @@ def build_svc():
 # Fallback: if no release is found, use the old PM Master List with a window.
 # ---------------------------------------------------------------------------
 PM_TITLE_RE = re.compile(r"^(\d{8})_PM Schedule", re.I)   # 20260601_PM Schedule for Jun_Update
-PM_RELEASES_TO_MERGE = 4
+PM_RELEASES_TO_MERGE = 12
 PM_MONTHS_BACK = 3   # fallback window only
 PM_MONTHS_FWD  = 6
 
@@ -344,6 +344,20 @@ MON_RE = re.compile(
     r"(January|February|March|April|May|June|July|August|September|October|November|December"
     r"|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)", re.I)
 
+def release_kind(datecode, target_ym):
+    """Two kinds of monthly file, per R's workflow:
+      'schedule' — released at/just before the month starts: the assignment list
+                   (who does which PM this month). Defines the work + the PIC.
+      'check'    — released DURING or AFTER the month: the verified completion
+                   record compiled from paper returns. Not every engineer uses
+                   the PWA, so THIS is the official completion source for KPI.
+    Rule: released after the target month began -> it's a check list."""
+    try:
+        rel_ym = f"{datecode[:4]}-{datecode[4:6]}"
+    except Exception:
+        return "schedule"
+    return "check" if rel_ym > target_ym else "schedule"
+
 def release_label(datecode, title=""):
     """Which month is this release FOR?
 
@@ -369,10 +383,20 @@ def release_label(datecode, title=""):
         return f"{MON_ABBR[tm - 1]} {y}"
     return f"{MON_ABBR[dm - 1]} {y}"
 
-def _pm_row(r, rel=""):
+def label_to_ym(label):
+    """'Jun 2026' -> '2026-06' (sortable)."""
+    try:
+        a, y = label.split()
+        return f"{int(y):04d}-{MON_ABBR.index(a) + 1:02d}"
+    except Exception:
+        return ""
+
+def _pm_row(r, rel="", src="schedule"):
     p = r["properties"]
     raw_d = prop(p, "Schedule Date")             # matches 'Schedule\nDate' too (norm())
     return {"rel": rel,                          # which monthly release this row came from
+            "relm": label_to_ym(rel),            # sortable YYYY-MM of that release
+            "src": src,                          # 'schedule' | 'check' (official completion)
             "id": r["id"],                       # needed for tick-off writes
             "site": prop(p, "End User"),
             "d": parse_sched_date(raw_d) or (raw_d if isinstance(raw_d, str) else ""),
@@ -381,7 +405,8 @@ def _pm_row(r, rel=""):
             "pmno": prop(p, "PM no"),            # real name: "PM \nno"
             # column name varies by release file — see prop_like()
             "pic": split_names(prop(p, "Assigned to")
-                               or prop_like(p, "person in charge", "main pic")),
+                               or prop_like(p, "person in charge", "pic(s)", "pic")),
+            "picsrc": src,                       # where the PIC came from
             "chk": split_names(prop(p, "Checked By")),
             "cd": prop_like(p, "completed date"),
             "st": prop(p, "Status"),
@@ -400,22 +425,55 @@ def build_pm():
     for datecode, dbid, title in use[::-1]:      # oldest → newest, newest wins
         rows = query_db(dbid)
         label = release_label(datecode, title)
-        print(f"  release {title} -> '{label}': {len(rows)} rows")
+        kind = release_kind(datecode, label_to_ym(label))
+        print(f"  {kind:8} {title} -> '{label}': {len(rows)} rows")
         for r in rows:
-            row = _pm_row(r, label)
-            # Merge on serial + month + PM number, NOT the exact date: a completion
-            # file may carry a slightly different schedule date for the same visit,
-            # which would otherwise duplicate the row instead of updating it.
-            key = (row["sn"].upper() or r["id"], (row["d"] or "")[:7], str(row["pmno"]))
-            if key in merged: dup[0] += 1
-            merged[key] = row
+            row = _pm_row(r, label, kind)
+            # Key on RELEASE MONTH + serial + PM number — never the schedule date:
+            # the July and check-list CSVs ship with the date column empty, so a
+            # date-based key would duplicate rows instead of updating them.
+            key = (row["relm"], row["sn"].upper() or r["id"], str(row["pmno"]))
+            old = merged.get(key)
+            if old:
+                dup[0] += 1
+                # Field-wise merge: a check list usually carries only status +
+                # checker, so keep the schedule's date/PIC/address rather than
+                # blanking them. Ticking must still target the schedule row, so
+                # the original id is preserved.
+                m = dict(old)
+                for k, v in row.items():
+                    if v not in ("", [], None): m[k] = v
+                if row["src"] == "check":
+                    m["id"] = old["id"]
+                    m["st"] = row["st"]           # official status wins outright
+                    # PIC: the schedule holds the PRE-ASSIGNED engineer, but jobs
+                    # get reassigned in the field. The check list is built from the
+                    # official service record, so it holds the ACTUAL engineer and
+                    # wins. Keep the original assignment as 'apic' when it differs,
+                    # so reassignments stay visible instead of silently vanishing.
+                    if row["pic"]:
+                        m["picsrc"] = "check"
+                        if old.get("pic") and old["pic"] != row["pic"]:
+                            m["apic"] = old["pic"]
+                    else:
+                        m["pic"] = old.get("pic", [])      # no actual PIC recorded
+                        m["picsrc"] = old.get("picsrc", "schedule")
+                merged[key] = m
+            else:
+                merged[key] = row
     pm = list(merged.values())
     nodate = sum(1 for x in pm if not x["d"])
     bystat = {}
-    for x in pm: bystat[f'{x["rel"]} / {x["st"]}'] = bystat.get(f'{x["rel"]} / {x["st"]}', 0) + 1
+    for x in pm:
+        k = f'{x["relm"] or "?"} {x["rel"]} [{x["src"]}] / {x["st"] or "(no status)"}'
+        bystat[k] = bystat.get(k, 0) + 1
     nopic = sum(1 for x in pm if not x["pic"])
+    reasgn = sum(1 for x in pm if x.get("apic"))
+    actual = sum(1 for x in pm if x.get("picsrc") == "check")
+    print(f"  PIC: {actual} rows from the official check-list (actual engineer), "
+          f"{len(pm) - actual} from the schedule (pre-assigned); {reasgn} reassigned")
     print(f"  {len(pm)} PM rows merged from {len(use)} release(s); {dup[0]} rows updated by a later file"
-          + (f"; {nodate} with unparseable dates" if nodate else "")
+          + (f"; {nodate} with no schedule date" if nodate else "")
           + (f"; {nopic} with no PIC" if nopic else ""))
     for k in sorted(bystat): print(f"    {k}: {bystat[k]}")
     return pm
