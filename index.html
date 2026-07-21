@@ -436,6 +436,24 @@ const PMTICK_LS='fw_pmtick';
 // carry-over and is collapsed into a single "Backlog" chip. Change this one line
 // if you ever want a different cut-off.
 const PM_START='2026-06';
+const PM_BACKLOG='Backlog';
+// Which monthly schedule does a row belong to? Used by BOTH the PM tab and the
+// monthly report so the two can never disagree.
+//  - dated before the workflow started  -> Backlog (pre-workflow carry-over)
+//  - otherwise                          -> the release month it was issued in
+//    (schedule date is unreliable: the July + check-list CSVs ship it empty)
+const MON3=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// 'Jun 2026' -> '2026-06'. Bundles built before relm existed only carry the label.
+function relToYM(rel){
+  const m=MON3.indexOf(String(rel||'').slice(0,3));
+  const y=String(rel||'').match(/\d{4}/);
+  return (m<0||!y)?'':`${y[0]}-${String(m+1).padStart(2,'0')}`;
+}
+function pmBucket(x){
+  const sd=(x.d||'').slice(0,7);
+  if(sd&&sd<PM_START)return PM_BACKLOG;
+  return x.relm||relToYM(x.rel)||sd||'(no date)';
+}
 // Statuses that mean "no work owed" — excluded from the to-do count.
 // Includes the newer options seen in the monthly release files.
 const NA_ST=['No Need','Not Required','Closed','No Contract','No Info','On Hold',
@@ -492,12 +510,14 @@ function pmRows(){
 }
 function pmSched(){
   const rows=pmRows();
-  // Category = schedule month, but everything before the PM workflow started is
-  // collapsed into ONE backlog bucket instead of a chip per month.
+  // Category = the MONTHLY SCHEDULE a row belongs to (one bucket per release:
+  // Jun 2026, Jul 2026, Aug 2026 …). Not the schedule date — the July and
+  // check-list CSVs ship with that column empty. Pre-workflow carry-over
+  // (dated before PM_START) collapses into one Backlog bucket.
   const prev=(()=>{const [y,m]=PM_START.split('-').map(Number);
     return m===1?`${y-1}-12`:`${y}-${String(m-1).padStart(2,'0')}`;})();
-  const BACKLOG='Backlog';
-  const bucket=x=>{const m=(x.d||'').slice(0,7); if(!m)return'(no date)'; return m>=PM_START?m:BACKLOG;};
+  const BACKLOG=PM_BACKLOG, bucket=pmBucket;
+  const labelOf={};rows.forEach(x=>{const b=x.relm||relToYM(x.rel);if(b&&x.rel)labelOf[b]=x.rel;});
   const present=[...new Set(rows.map(bucket))];
   const cats=present.filter(b=>b!==BACKLOG&&b!=='(no date)').sort().reverse()
     .concat(present.includes(BACKLOG)?[BACKLOG]:[]).concat(present.includes('(no date)')?['(no date)']:[]);
@@ -506,7 +526,7 @@ function pmSched(){
     pmMonth=cats.includes(cur)?cur:(cats[0]||'All');
   }
   const c=pmMonth;
-  const catLabel=b=>b===BACKLOG?`📦 Backlog (≤${prev})`:(b==='All'?'All':b);
+  const catLabel=b=>b===BACKLOG?`📦 Backlog (≤${prev})`:(b==='All'?'All':(labelOf[b]?`📅 ${labelOf[b]}`:b));
   const inCat=x=>c==='All'||bucket(x)===c;
   // Status chips come from YOUR data ("Jun Schedule", "Outstanding", …), not invented buckets
   const stats=[...new Set(rows.filter(inCat).map(x=>x.st).filter(Boolean))]
@@ -527,6 +547,7 @@ function pmSched(){
    <div class="chips">${[...cats,'All'].map(m=>`<button class="chip${c===m?' on':''}" onclick="pmMonth='${m}';pmStF='All';pmSel.clear();pm()">${esc(catLabel(m))}</button>`).join('')}</div>
    <div class="chips">${['All',...stats].map(s=>`<button class="chip${pmStF===s?' on':''}" onclick="pmStF='${s.replace(/'/g,"\\'")}';pmSel.clear();pm()">${esc(s)}</button>`).join('')}</div>
    <div class="chips"><span class="dim" style="align-self:center">Group by</span>${[['pic','👤 PIC'],['site','🏥 Hospital'],['st','🏷 Status'],['month','📅 Month']].map(([k,l])=>`<button class="chip${pmGroup===k?' on':''}" onclick="pmGroup='${k}';pm()">${l}</button>`).join('')}</div>
+   ${pmGroup==='pic'&&flt.some(x=>x.picsrc==='check')?'<div class="hint">👤 Green PIC = actual engineer from the official check-list. Plain = pre-assigned on the schedule. ↺ marks a job that was reassigned.</div>':''}
    <div class="hint">${flt.length} rows · ${done} completed${viaV?' ('+viaV+' from Visit Log)':''}, ${flt.length-done-na} still to do${na?', '+na+' n/a':''}. A tick marks the row <b>Completed</b> in Notion — use the Visit Log only when something abnormal was found.
      ${getVisits()?'':'<span style="color:var(--warn)">⚠ Visit Log not loaded on this device yet — tap ↻ in the Visit Log tab so completions logged there show here.</span>'}</div>
    ${c===BACKLOG?`<div class="hint">Rows scheduled before ${PM_START}, when the monthly PM workflow started — carried-forward work, grouped together instead of one chip per month.</div>`:''}
@@ -545,7 +566,7 @@ function pmSchedLine(x){
    <div>
    <div class="row"><h3>${esc(x.site)}</h3><span class="dim">${esc(x.d)}</span></div>
    <div class="dim">${esc(x.item)} · <span class="click" style="color:var(--acc)" onclick="go('item',${JSON.stringify(x.sn).replace(/"/g,'&quot;')})">${esc(x.sn)}</span> · PM ${esc(x.pmno)}</div>
-   <div>${(x.pic||[]).map(p=>`<span class="tag">👤 ${esc(p)}</span>`).join('')}<span class="tag ${st}">${esc(x.st)}</span><span class="tag">${esc(x.grp)}</span>${x._pend?'<span class="tag warn">⏳ syncing</span>':''}${x._viaVisit?`<span class="tag ok">📝 Visit Log ${esc(x._viaVisit)}</span>`:''}${x.rel?`<span class="tag">📄 ${esc(x.rel)}</span>`:''}</div>
+   <div>${(x.pic||[]).map(p=>`<span class="tag${x.picsrc==='check'?' ok':''}">👤 ${esc(p)}</span>`).join('')}${(x.apic||[]).length?`<span class="tag dim" title="originally assigned">↺ was ${esc(x.apic.join(', '))}</span>`:''}<span class="tag ${st}">${esc(x.st)}</span><span class="tag">${esc(x.grp)}</span>${x._pend?'<span class="tag warn">⏳ syncing</span>':''}${x._viaVisit?`<span class="tag ok">📝 Visit Log ${esc(x._viaVisit)}</span>`:''}${x.src==='check'?'<span class="tag ok">✅ official check-list</span>':''}${x.rel?`<span class="tag">📄 ${esc(x.rel)}</span>`:''}${(x.chk||[]).length?`<span class="tag">✓ ${esc(x.chk.join(', '))}</span>`:''}</div>
    ${x.addr?`<div class="hint">${esc(x.addr)}</div>`:''}
    ${canTick?`<div><button class="btn sm" onclick='tickPM([${attr(x.id)}])'>✓ Done</button><button class="btn sm sec" onclick='go("visitnew",${attr({site:x.site,sn:x.sn,item:x.item,id:x.id,abn:1})})'>⚠ Abnormal</button></div>`:''}
    </div></div></div>`;
@@ -814,13 +835,15 @@ let repMonth=null;
 function anReport(){
   const PMR=pmRows();
   const svcMs=DB.svc.map(s=>(s.d||'').slice(0,7)).filter(Boolean);
-  const pmMs=PMR.map(x=>x.d?x.d.slice(0,7):'').filter(Boolean);
+  const pmMs=PMR.map(pmBucket).filter(b=>b&&b!==PM_BACKLOG&&b!=='(no date)');
   const months=[...new Set([...svcMs,...pmMs])].sort();
   if(!months.length){$('ansec').innerHTML='<div class=dim>No data.</div>';return}
   if(repMonth===null||!months.includes(repMonth)){const cur=new Date().toISOString().slice(0,7);repMonth=months.includes(cur)?cur:months[months.length-1];}
   const idx=months.indexOf(repMonth), last3=months.slice(Math.max(0,idx-2),idx+1);
   const cmN=m=>DB.svc.filter(s=>(s.d||'').startsWith(m)).length;
-  const pmSched2=m=>PMR.filter(x=>(x.d||'').startsWith(m)&&pmCat(x.st)!=='N/A');
+  // Count PM by the monthly schedule it belongs to (release month), matching the
+  // PM tab. N/A statuses (Replaced/Excluded/No Need…) are not work owed.
+  const pmSched2=m=>PMR.filter(x=>pmBucket(x)===m&&pmCat(x.st)!=='N/A');
   const pmDone=m=>pmSched2(m).filter(x=>x.st==='Completed').length;
   const mx=Math.max(...last3.map(m=>Math.max(cmN(m),pmSched2(m).length)),1);
   const chart=last3.map(m=>`
@@ -850,7 +873,12 @@ function anReport(){
     <div class="caltbl"><table class="reptbl"><tr><th>Rank</th><th style="text-align:left">PIC</th><th>CM</th><th>CM %</th><th>PM done</th><th>PM sched</th><th>PM %</th><th>Total</th></tr>
     ${rows.map(r=>`<tr><td>${r.rank}</td><td style="text-align:left">${esc(r.n)}</td><td>${r.cm}</td><td>${r.cmPct}%</td><td>${r.pmC}</td><td>${r.pmA}</td><td>${r.pmPct===null?'—':r.pmPct+'%'}</td><td><b>${r.tot}</b></td></tr>`).join('')||'<tr><td colspan=8 class=dim>No PIC data this month.</td></tr>'}
     </table></div>
-    <div class="hint">CM % = share of the team's ${cmTot} CM cases this month. PM % = completed ÷ scheduled. Rank = CM cases + PM completed (ties share a rank).</div></div>
+    <div class="hint">CM % = share of the team's ${cmTot} CM cases this month. PM % = completed ÷ scheduled (statuses like Replaced/Excluded/No Need are excluded). Rank = CM cases + PM completed (ties share a rank).
+     ${(()=>{const ck=sch.filter(x=>x.src==='check').length,ap=sch.filter(x=>x.picsrc==='check').length,rs=sch.filter(x=>(x.apic||[]).length).length;
+       return (ck?`<b>${ck} of ${sch.length}</b> PM rows are confirmed by the official check-list — the rest come from the schedule file or app ticks. `
+                 :'⚠ No official check-list has been imported for this month yet, so PM completion reflects only the schedule file and app ticks. ')
+             +(ap?`PM credit follows the actual engineer recorded in the check-list for <b>${ap}</b> row(s)${rs?` (${rs} reassigned from the original schedule)`:''}; the remainder use the pre-assigned PIC.`
+                 :'PM credit currently uses the pre-assigned PIC from the schedule.');})()}</div></div>
    <div class="hint">Source: offline snapshot (${esc(DB.asof)}) + ticks queued on this device. Print → “Save as PDF” to send.</div>`;
 }
 function anOverview(){
