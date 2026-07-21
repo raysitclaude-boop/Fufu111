@@ -204,13 +204,14 @@ async function unlock(){
   boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
+const APP_VER='v5.2';
 function boot(){
   $('gate').style.display='none';
   ['items','svc','pm','parts','cards','errors'].forEach(k=>DB[k]=DB[k]||[]);
   DB.sectors=DB.sectors||{}; DB.procedures=DB.procedures||{};
   ROLE=DB.role||'admin';
   if(ROLE==='worker')['fix','parts','analysis'].forEach(k=>{const b=$('nb-'+k);if(b)b.style.display='none';});
-  $('asof').textContent='Data: '+DB.asof;
+  $('asof').textContent=APP_VER+' · Data: '+DB.asof;
   updateSyncBadge();flushOutbox();
   go(ROLE==='worker'?'pm':'sites');
 }
@@ -435,7 +436,10 @@ const PMTICK_LS='fw_pmtick';
 // carry-over and is collapsed into a single "Backlog" chip. Change this one line
 // if you ever want a different cut-off.
 const PM_START='2026-06';
-const NA_ST=['No Need','Not Required','Closed','No Contract','No Info','On Hold'];
+// Statuses that mean "no work owed" — excluded from the to-do count.
+// Includes the newer options seen in the monthly release files.
+const NA_ST=['No Need','Not Required','Closed','No Contract','No Info','On Hold',
+             'Replaced','Excluded','No Need but recorded in system','Cancelled','Canceled'];
 const pmSel=new Set();
 const attr=o=>esc(JSON.stringify(o)).replace(/'/g,'&#39;');
 const getTicks=()=>JSON.parse(localStorage.getItem(PMTICK_LS)||'{}');
