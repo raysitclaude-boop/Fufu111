@@ -143,6 +143,18 @@ const ACTIVE=['Anson','Poon','Pong','Alan','Yoshida','Ivan','Ray','Joe','Eunice'
 const RESULTS=['Completed','Completed with findings','Partial - follow-up needed','Not done - rescheduled'];
 const PM_TYPES=['Scheduled PM','Ad-hoc PM','Safety/QA Test','Installation Check'];
 const workerReady=()=>WORKER_URL.startsWith('https');
+// ---- engineer name normalisation ----
+// Field data spells the same person several ways: "Poon"/"poon", "Alan"/"Alan*"
+// (the asterisk marks a note in the source sheet, not a different engineer).
+// Everything downstream — grouping, ranking, KPI — must see ONE identity.
+const ROSTER=['Anson','Poon','Pong','Alan','Yoshida','Ivan','Ray','Joe','Eunice','Tai','Kenton','Tim','Winnie','Cheryl','Dixon','Choi'];
+const ROSTER_L={};ROSTER.forEach(n=>ROSTER_L[n.toLowerCase()]=n);
+function canonName(n){
+  const s=String(n||'').replace(/[*＊\s]+$/,'').replace(/^[*＊\s]+/,'').trim();
+  if(!s)return '';
+  return ROSTER_L[s.toLowerCase()]||s.charAt(0).toUpperCase()+s.slice(1).toLowerCase();
+}
+const canonList=a=>[...new Set((Array.isArray(a)?a:(a?[a]:[])).map(canonName).filter(Boolean))];
 
 // ---------- markdown renderer (headings / lists / tables / code / bold) ----------
 function md(src){
@@ -210,6 +222,9 @@ function boot(){
   ['items','svc','pm','parts','cards','errors'].forEach(k=>DB[k]=DB[k]||[]);
   DB.sectors=DB.sectors||{}; DB.procedures=DB.procedures||{};
   ROLE=DB.role||'admin';
+  // normalise engineer names once, so old bundles are fixed without a rebuild
+  DB.pm.forEach(x=>{x.pic=canonList(x.pic);x.apic=canonList(x.apic);x.chk=canonList(x.chk);});
+  DB.svc.forEach(s=>{s.pic=canonList(s.pic);});
   if(ROLE==='worker')['fix','parts','analysis'].forEach(k=>{const b=$('nb-'+k);if(b)b.style.display='none';});
   $('asof').textContent=APP_VER+' · Data: '+DB.asof;
   updateSyncBadge();flushOutbox();
@@ -891,13 +906,23 @@ function anReport(){
   const cmBy={},pmBy={};
   DB.svc.filter(s=>(s.d||'').startsWith(repMonth)).forEach(s=>(s.pic||[]).forEach(p=>cmBy[p]=(cmBy[p]||0)+1));
   pmSched2(repMonth).forEach(x=>(x.pic||[]).forEach(p=>{const e=pmBy[p]=pmBy[p]||{a:0,c:0};e.a++;if(x.st==='Completed')e.c++;}));
-  const names=[...new Set([...Object.keys(cmBy),...Object.keys(pmBy)])];
   const cmTot=Object.values(cmBy).reduce((a,b)=>a+b,0);
-  const rows=names.map(n=>{const cm=cmBy[n]||0,p=pmBy[n]||{a:0,c:0};
-    return {n,cm,cmPct:cmTot?Math.round(100*cm/cmTot):0,pmA:p.a,pmC:p.c,pmPct:p.a?Math.round(100*p.c/p.a):null,tot:cm+p.c};})
-    .sort((a,b)=>b.tot-a.tot||b.cm-a.cm);
-  rows.forEach((r,i)=>{r.rank=(i&&r.tot===rows[i-1].tot)?rows[i-1].rank:i+1;});
   const sch=pmSched2(repMonth);
+  // ties share a rank (1,1,3…)
+  const ranked=(arr,val)=>{arr.sort((a,b)=>val(b)-val(a)||(b.c||0)-(a.c||0));
+    arr.forEach((r,i)=>{r.rank=(i&&val(r)===val(arr[i-1]))?arr[i-1].rank:i+1;});return arr;};
+  const cmRank=ranked(Object.entries(cmBy).map(([n,c])=>({n,c,pct:cmTot?Math.round(100*c/cmTot):0})),r=>r.c);
+  const pmRank=ranked(Object.entries(pmBy).map(([n,v])=>({n,c:v.c,a:v.a,pct:v.a?Math.round(100*v.c/v.a):0})),r=>r.c);
+  // department = the Group column on each PM row (HA / Clinic / PH / Vet / …)
+  const dept={};
+  sch.forEach(x=>{const g=x.grp||'(no group)';const e=dept[g]=dept[g]||{a:0,c:0};e.a++;if(x.st==='Completed')e.c++;});
+  const deptRows=Object.entries(dept).map(([g,v])=>({g,a:v.a,c:v.c,pct:v.a?Math.round(100*v.c/v.a):0}))
+    .sort((a,b)=>b.a-a.a);
+  const deptPct=sch.length?Math.round(100*pmDone(repMonth)/sch.length):0;
+  const trend=last3.map(m=>{const s=pmSched2(m).length,d=pmDone(m);return {m,s,d,pct:s?Math.round(100*d/s):0}});
+  const rankTbl=(rows,cols)=>`<div class="caltbl"><table class="reptbl"><tr><th>#</th><th style="text-align:left">PIC</th>${cols.map(c=>`<th>${c}</th>`).join('')}</tr>
+    ${rows.length?rows.map(r=>`<tr${r.rank===1?' class="rank1"':''}><td>${r.rank}</td><td style="text-align:left">${esc(r.n)}</td>${r.cells.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')
+      :`<tr><td colspan="${cols.length+2}" class="dim">No data this month.</td></tr>`}</table></div>`;
   $('ansec').innerHTML=`
    <div class="chips noprint">${months.slice(-6).map(m=>`<button class="chip${repMonth===m?' on':''}" onclick="repMonth='${m}';analysis()">${m}</button>`).join('')}</div>
    <div class="row"><h2 style="font-size:16px">📄 Monthly Report — ${repMonth}</h2><button class="btn sm sec noprint" onclick="window.print()">🖨 Print / PDF</button></div>
@@ -906,11 +931,26 @@ function anReport(){
      <div class="kpi"><div class="n g">${pmDone(repMonth)} / ${sch.length}</div><div class="l">PM completed / scheduled (${sch.length?Math.round(100*pmDone(repMonth)/sch.length):0}%)${pmMoved(repMonth).length?`<br><span class="dim">${pmMoved(repMonth).length} deferred to a later month, excluded</span>`:''}</div></div>
    </div>
    <div class="card"><h3>Last 3 months — CM &amp; PM volume</h3>${chart}</div>
-   <div class="card"><h3>By engineer (PIC) — ${repMonth}</h3>
-    <div class="caltbl"><table class="reptbl"><tr><th>Rank</th><th style="text-align:left">PIC</th><th>CM</th><th>CM %</th><th>PM done</th><th>PM sched</th><th>PM %</th><th>Total</th></tr>
-    ${rows.map(r=>`<tr><td>${r.rank}</td><td style="text-align:left">${esc(r.n)}</td><td>${r.cm}</td><td>${r.cmPct}%</td><td>${r.pmC}</td><td>${r.pmA}</td><td>${r.pmPct===null?'—':r.pmPct+'%'}</td><td><b>${r.tot}</b></td></tr>`).join('')||'<tr><td colspan=8 class=dim>No PIC data this month.</td></tr>'}
-    </table></div>
-    <div class="hint">CM % = share of the team's ${cmTot} CM cases this month. PM % = completed ÷ scheduled (statuses like Replaced/Excluded/No Need are excluded). Rank = CM cases + PM completed (ties share a rank).
+   <div class="card"><h3>🏢 Department PM completion — ${repMonth}</h3>
+    <div class="kpis" style="grid-template-columns:1fr"><div class="kpi"><div class="n ${deptPct>=80?'g':(deptPct>=50?'a':'')}" style="${deptPct<50?'color:var(--bad)':''}">${deptPct}%</div>
+      <div class="l">Whole department · ${pmDone(repMonth)} of ${sch.length} scheduled PM completed</div></div></div>
+    <div class="dim" style="margin:8px 0 2px">Last 3 months</div>
+    ${trend.map(t=>barSimple(t.m,t.pct,100,t.pct>=80?'var(--g2)':(t.pct>=50?'var(--warn)':'var(--bad)'))).join('')}
+    <div class="dim" style="margin:10px 0 2px">By group</div>
+    <div class="caltbl"><table class="reptbl"><tr><th style="text-align:left">Group</th><th>Completed</th><th>Scheduled</th><th>%</th></tr>
+    ${deptRows.map(d=>`<tr><td style="text-align:left">${esc(d.g)}</td><td>${d.c}</td><td>${d.a}</td><td><b>${d.pct}%</b></td></tr>`).join('')||'<tr><td colspan=4 class=dim>No data.</td></tr>'}
+    <tr><td style="text-align:left"><b>Total</b></td><td><b>${pmDone(repMonth)}</b></td><td><b>${sch.length}</b></td><td><b>${deptPct}%</b></td></tr></table></div></div>
+
+   <div class="card"><h3>🔧 CM ranking — ${repMonth}</h3>
+    <div class="dim" style="margin-bottom:4px">Corrective jobs handled, by engineer</div>
+    ${rankTbl(cmRank.map(r=>({...r,cells:[r.c,r.pct+'%']})),['CM cases','Share'])}
+    <div class="hint">${cmN(repMonth)} CM cases produced ${cmTot} engineer assignments this month (a job attended by two engineers credits both). Share = of those ${cmTot} assignments, so the column totals 100%.</div></div>
+
+   <div class="card"><h3>📅 PM ranking — ${repMonth}</h3>
+    <div class="dim" style="margin-bottom:4px">Scheduled PM completed, by engineer</div>
+    ${rankTbl(pmRank.map(r=>({...r,cells:[r.c,r.a,r.pct+'%']})),['Completed','Assigned','Rate'])}
+    <div class="hint">Ranked by PM completed; Rate = completed ÷ assigned. Deferred and n/a rows are excluded from both.
+    <div class="hint">PM % = completed ÷ scheduled; deferred rows and statuses like Replaced/Excluded/No Need are excluded from both. Ties share a rank.
      ${(()=>{const ck=sch.filter(x=>x.src==='check').length,ap=sch.filter(x=>x.picsrc==='check').length,rs=sch.filter(x=>(x.apic||[]).length).length;
        return (ck?`<b>${ck} of ${sch.length}</b> PM rows are confirmed by the official check-list — the rest come from the schedule file or app ticks. `
                  :'⚠ No official check-list has been imported for this month yet, so PM completion reflects only the schedule file and app ticks. ')
