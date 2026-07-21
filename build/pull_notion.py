@@ -223,6 +223,30 @@ def render_table(table_block):
     return "\n".join(md)
 
 # ----------------------------------------------------------------------------
+# HA clusters — the official Hospital Authority list has SIX. Hong Kong East and
+# Hong Kong West were merged into Hong Kong Island. Older Notion rows (and any
+# hand-typed value) may still use retired or abbreviated names, so normalise on
+# the way in and keep the app's grouping keys stable.
+# ----------------------------------------------------------------------------
+HA_CLUSTERS = ["Hong Kong Island", "Kowloon Central", "Kowloon East",
+               "Kowloon West", "New Territories East", "New Territories West"]
+_SECTOR_ALIAS = {
+    "hk island": "Hong Kong Island", "hong kong island": "Hong Kong Island",
+    "hong kong east": "Hong Kong Island", "hong kong west": "Hong Kong Island",
+    "hk east": "Hong Kong Island", "hk west": "Hong Kong Island",
+    "kowloon central": "Kowloon Central", "kln central": "Kowloon Central",
+    "kowloon east": "Kowloon East", "kln east": "Kowloon East",
+    "kowloon west": "Kowloon West", "kln west": "Kowloon West",
+    "nt east": "New Territories East", "new territories east": "New Territories East",
+    "nt west": "New Territories West", "new territories west": "New Territories West",
+}
+def HA_SECTOR(v):
+    k = str(v or "").strip().lower()
+    if not k:
+        return ""
+    return _SECTOR_ALIAS.get(k, str(v).strip())
+
+# ----------------------------------------------------------------------------
 # Section builders
 # ----------------------------------------------------------------------------
 def build_items():
@@ -245,10 +269,24 @@ def build_items():
               "cluster": prop(p, "Cluster"),
               "addr": prop(p, "Address")}
         items.append(it)
-        sec = prop(p, "HA Cluster")
-        if site and sec and site not in sectors: sectors[site] = sec
+        # Sector map: first NON-EMPTY value wins. (Previously first-seen won, so a
+        # site whose first row had a blank HA Cluster stayed unmapped forever.)
+        sec = HA_SECTOR(prop(p, "HA Cluster"))
+        if site and sec and not sectors.get(site): sectors[site] = sec
     print(f"  {len(items)} items ({skipped} rows without serial skipped)")
     if len(items) < 500: sys.exit("FATAL validation: Item Master suspiciously small — aborting.")
+
+    # Guard: every HA site must land in a cluster, or it renders as uncategorised
+    # in the app. Fail loudly at build time instead of shipping a silent gap.
+    ha_sites = {i["site"] for i in items if i.get("cluster") == "HA" and i.get("site")}
+    unmapped = sorted(s for s in ha_sites if not sectors.get(s))
+    if unmapped:
+        sys.exit("FATAL validation: HA site(s) with no HA Cluster — fix in Notion "
+                 "(Item Master → HA Cluster) then re-run:\n  - " + "\n  - ".join(unmapped))
+    bad = sorted({v for v in sectors.values() if v not in HA_CLUSTERS})
+    if bad:
+        print(f"  WARNING: non-standard cluster name(s) in use: {bad}")
+    print(f"  {len(sectors)} sites mapped to clusters")
     return items, sectors
 
 def build_svc():
@@ -507,17 +545,63 @@ def build_pm_master():
     print(f"  {len(pm)} PM rows in window {lo}..{hi} ({skipped} outside window skipped)")
     return pm
 
-PN_RE = re.compile(r"\b([A-Z0-9][A-Z0-9\-]{4,})\b")
+# --- Parts parsing ----------------------------------------------------------
+# Engineers record parts as one free-text string, e.g.
+#     "BCN65A Board Assembly P/N: 857Y120043C"
+#     "RMV65A Board: P/N: 857Y200090"
+# The old parser grabbed the first token containing a digit, which matched the
+# BOARD CODE (BCN65A) rather than the part number, and left the "P/N:" label
+# stranded in the name — producing " Board Assembly P/N: 857Y120043C".
+#
+# Rules now:
+#   1. Split on the P/N label (P/N, PN, P/M typo) — everything after it is the number.
+#   2. Board codes (3 letters + 2 digits + 1 letter) belong to the NAME, and are
+#      moved to the end so one board reads the same way everywhere:
+#         "BCN65A Board Assembly"  ->  "Board Assembly BCN65A"
+#         "RMV65A Board"           ->  "Board RMV65A"
+PN_LABEL_RE = re.compile(r"\b(?:P\s*/\s*N|PN|P\s*/\s*M)\b\s*:?\s*", re.I)
+BOARD_CODE_RE = re.compile(r"\b([A-Z]{3}\d{2}[A-Z])\b")
+BARE_PN_RE = re.compile(r"\b(ACC\d{4}|[A-Z0-9]{2,}[-_][A-Z0-9\-_]{4,})\s*$", re.I)
+
+def parse_part(raw):
+    """'BCN65A Board Assembly P/N: 857Y120043C' -> ('Board Assembly BCN65A', '857Y120043C')"""
+    s = str(raw).strip()
+    m = PN_LABEL_RE.search(s)
+    if m:
+        name, pn = s[:m.start()], s[m.end():].strip()
+    else:
+        m2 = BARE_PN_RE.search(s)          # no label, but a trailing ACCnnnn / dashed code
+        if m2:
+            name, pn = s[:m2.start()], m2.group(1).strip()
+        else:
+            name, pn = s, ""
+    pn = re.sub(r"\s+", " ", pn).strip().rstrip(".,;")
+
+    name = re.sub(r"\s{2,}", " ", name).strip().strip(":").strip()
+    cm = BOARD_CODE_RE.search(name)
+    if cm:
+        code = cm.group(1)
+        rest = (name[:cm.start()] + " " + name[cm.end():]).strip()
+        paren = ""
+        pm = re.search(r"\(([^)]*)\)", rest)
+        if pm:
+            inner = pm.group(1).strip()
+            if inner:
+                paren = " (" + inner + ")"
+            rest = (rest[:pm.start()] + " " + rest[pm.end():]).strip()
+        rest = re.sub(r"\s{2,}", " ", rest).strip().strip(":").strip()
+        rest = re.sub(r"\bboard\b", "Board", rest)
+        name = f"{rest} {code}{paren}" if rest else f"Board {code}"
+    return re.sub(r"\s{2,}", " ", name).strip(" -–:"), pn
+
 def build_parts(svc):
     print("Deriving parts catalog from CM records ...")
     cat = {}
     for s in svc:
         for raw in s.get("parts", []):
-            pn = next((m.group(1) for m in PN_RE.finditer(raw.upper())
-                       if any(ch.isdigit() for ch in m.group(1))), "")
-            name = raw
-            if pn:
-                name = re.sub(re.escape(pn), "", raw, flags=re.I).strip(" -–:()") or pn
+            name, pn = parse_part(raw)
+            if not name and pn:
+                name = pn
             key = pn or name.lower()
             e = cat.setdefault(key, {"name": name[:60], "pn": pn, "n": 0, "l2": {}, "mach": []})
             e["n"] += 1
