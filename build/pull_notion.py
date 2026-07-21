@@ -328,13 +328,34 @@ def split_names(v):
 
 MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+MON_RE = re.compile(
+    r"(January|February|March|April|May|June|July|August|September|October|November|December"
+    r"|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)", re.I)
 
-def release_label(datecode):
-    """'20260601' -> 'Jun 2026' — the month the release is FOR."""
+def release_label(datecode, title=""):
+    """Which month is this release FOR?
+
+    The filename date is the RELEASE date, not the target month:
+      20260601_PM Schedule for Jun_Update  -> released 1 Jun, for June
+      20260630_PM Schedule_July            -> released 30 Jun, for JULY
+      20260713_PM Schedule_June_Kenton     -> released 13 Jul, for JUNE
+    So the month NAME in the title wins; the datecode is only a fallback.
+    The year is inferred from the datecode (handles a Dec release for January).
+    """
+    y, dm = None, None
     try:
-        return f"{MON_ABBR[int(datecode[4:6]) - 1]} {datecode[:4]}"
+        y, dm = int(datecode[:4]), int(datecode[4:6])
     except Exception:
-        return datecode
+        return title or datecode
+    m = MON_RE.search(re.sub(r"^\d{8}", "", title or ""))
+    if m:
+        name = m.group(1)[:3].title()
+        tm = MON_ABBR.index(name) + 1 if name in MON_ABBR else dm
+        # released in Dec for Jan (or in Jan for Dec) → roll the year
+        if dm == 12 and tm == 1: y += 1
+        elif dm == 1 and tm == 12: y -= 1
+        return f"{MON_ABBR[tm - 1]} {y}"
+    return f"{MON_ABBR[dm - 1]} {y}"
 
 def _pm_row(r, rel=""):
     p = r["properties"]
@@ -362,7 +383,7 @@ def build_pm():
     use = rels[:PM_RELEASES_TO_MERGE]
     for datecode, dbid, title in use[::-1]:      # oldest → newest, newest wins
         rows = query_db(dbid)
-        label = release_label(datecode)
+        label = release_label(datecode, title)
         print(f"  release {title} -> '{label}': {len(rows)} rows")
         for r in rows:
             row = _pm_row(r, label)
