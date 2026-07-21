@@ -466,6 +466,15 @@ def _pm_row(r, rel="", src="schedule"):
             "grp": prop(p, "Group"),
             "addr": prop(p, "End User Address")}
 
+def _pm_blank(row):
+    """A CSV import leaves trailing all-empty rows behind. They carry no machine,
+    no site and no serial, but still counted toward '6/19 done' and cluttered the
+    schedule. A row is real only if it identifies WHAT is being serviced (serial
+    or item) or WHERE (site)."""
+    return not (str(row.get("sn") or "").strip()
+                or str(row.get("item") or "").strip()
+                or str(row.get("site") or "").strip())
+
 def build_pm():
     print("Looking for monthly PM Schedule releases ...")
     rels = find_monthly_pm_dbs()
@@ -474,6 +483,10 @@ def build_pm():
               "integration — falling back to the PM Master List.")
         return build_pm_master()
     merged, dup = {}, [0]
+    blank = [0]        # all-empty rows left behind by the CSV import
+    by_serial = {}     # (release month, serial) -> [keys], for the fallback match
+    claimed = set()    # keys a check-list row has already completed
+    pmno_fix = [0]     # completions rescued by matching on serial instead of PM no
     use = rels[:PM_RELEASES_TO_MERGE]
     for datecode, dbid, title in use[::-1]:      # oldest → newest, newest wins
         rows = query_db(dbid)
@@ -482,12 +495,31 @@ def build_pm():
         print(f"  {kind:8} {title} -> '{label}': {len(rows)} rows")
         for r in rows:
             row = _pm_row(r, label, kind)
+            if _pm_blank(row):
+                blank[0] += 1
+                continue
             # Key on RELEASE MONTH + serial + PM number — never the schedule date:
             # the July and check-list CSVs ship with the date column empty, so a
             # date-based key would duplicate rows instead of updating them.
-            key = (row["relm"], row["sn"].upper() or r["id"], str(row["pmno"]))
+            sn = row["sn"].upper()
+            key = (row["relm"], sn or r["id"], str(row["pmno"] or ""))
             old = merged.get(key)
+            # A check list is compiled by hand from the paper returns, and its
+            # "PM no" regularly disagrees with the schedule's for the same machine
+            # (Macau, June 2026: schedule says 2/4, check list says 4/4). Matching
+            # on PM no alone files the completion as a SECOND row and leaves the
+            # scheduled one outstanding for ever. So when the exact key misses,
+            # claim an unmatched schedule row with the same serial in the same
+            # month — the serial identifies the machine, the PM no does not.
+            if old is None and kind == "check" and sn:
+                for k in by_serial.get((row["relm"], sn), []):
+                    if k in claimed or merged[k]["src"] != "schedule":
+                        continue
+                    key, old = k, merged[k]
+                    pmno_fix[0] += 1
+                    break
             if old:
+                claimed.add(key)
                 dup[0] += 1
                 # Field-wise merge: a check list usually carries only status +
                 # checker, so keep the schedule's date/PIC/address rather than
@@ -514,6 +546,8 @@ def build_pm():
                 merged[key] = m
             else:
                 merged[key] = row
+                if sn:
+                    by_serial.setdefault((row["relm"], sn), []).append(key)
     pm = list(merged.values())
     nodate = sum(1 for x in pm if not x["d"])
     bystat = {}
@@ -526,6 +560,9 @@ def build_pm():
     print(f"  PIC: {actual} rows from the official check-list (actual engineer), "
           f"{len(pm) - actual} from the schedule (pre-assigned); {reasgn} reassigned")
     print(f"  {len(pm)} PM rows merged from {len(use)} release(s); {dup[0]} rows updated by a later file"
+          + (f"; {blank[0]} empty import rows dropped" if blank[0] else "")
+          + (f"; {pmno_fix[0]} completions matched on serial (PM no disagreed "
+             f"between schedule and check list)" if pmno_fix[0] else "")
           + (f"; {nodate} with no schedule date" if nodate else "")
           + (f"; {nopic} with no PIC" if nopic else ""))
     for k in sorted(bystat): print(f"    {k}: {bystat[k]}")
