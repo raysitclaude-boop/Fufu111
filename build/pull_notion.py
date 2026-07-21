@@ -332,11 +332,26 @@ def parse_sched_date(s):
     if m: return f"{int(m.group(3)):04d}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
     return ""
 
+ROSTER = ["Anson", "Poon", "Pong", "Alan", "Yoshida", "Ivan", "Ray", "Joe",
+          "Eunice", "Tai", "Kenton", "Tim", "Winnie", "Cheryl", "Dixon", "Choi"]
+ROSTER_L = {n.lower(): n for n in ROSTER}
+
+def canon_name(n):
+    """One identity per engineer: 'poon' -> 'Poon', 'Alan*' -> 'Alan'.
+    The trailing asterisk is a note marker in the source sheet, not a person."""
+    s = str(n or "").strip().strip("*＊").strip()
+    if not s: return ""
+    return ROSTER_L.get(s.lower(), s[:1].upper() + s[1:].lower())
+
 def split_names(v):
     """'Assigned to' is plain text in CSV imports ('Ray, Joe') but multi-select
-    in the master list — accept both."""
-    if isinstance(v, list): return [x for x in v if x]
-    return [x for x in re.split(r"[,;/、+&\s]+", str(v or "")) if x]
+    in the master list — accept both, and canonicalise every name."""
+    raw = v if isinstance(v, list) else re.split(r"[,;/、+&\s]+", str(v or ""))
+    out = []
+    for x in raw:
+        c = canon_name(x)
+        if c and c not in out: out.append(c)
+    return out
 
 MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
