@@ -470,7 +470,39 @@ function pm(){
   ({sched:pmSched,visits:pmVisits})[pmTab]();
 }
 // --- Schedule (from nightly bundle, tick = mark Completed in Notion) ---
+// A status like "Jul Schedule" names the month the job is scheduled FOR.
+// Inside that same month it means "still to do"; inside an EARLIER month it
+// means the job was deferred — e.g. the June check-list marks 59 rows
+// "Jul Schedule" because they rolled into the July schedule, where they already
+// appear. Those must not count as June outstanding, or June is double-charged.
+// Returns the target 'YYYY-MM', or '' if the status isn't a month/year schedule.
+function schedTargetYM(st,refYM){
+  const s=String(st||'').trim();
+  const yr=s.match(/^(\d{4})\s+Schedule$/i);
+  if(yr)return `${yr[1]}-01`;                       // "2027 Schedule"
+  const mo=s.match(/^([A-Za-z]{3,9})\s+Schedule$/i);
+  if(!mo||!/^\d{4}-\d{2}$/.test(refYM||''))return '';
+  const idx=MON3.indexOf(mo[1].slice(0,3).replace(/^./,c=>c.toUpperCase()));
+  if(idx<0)return '';
+  const [by,bm]=refYM.split('-').map(Number);
+  const y=(idx+1)<bm?by+1:by;                       // earlier month name ⇒ next year
+  return `${y}-${String(idx+1).padStart(2,'0')}`;
+}
 const pmCat=st=>st==='Completed'?'Completed':(NA_ST.includes(st)?'N/A':'Outstanding');
+// Bucket-aware category: adds 'Moved' for jobs deferred to another month.
+function pmCatOf(x){
+  if(x.st==='Completed')return 'Completed';
+  if(NA_ST.includes(x.st))return 'N/A';
+  const b=pmBucket(x);
+  const ref=/^\d{4}-\d{2}$/.test(b)?b:(x.d||'').slice(0,7);
+  const t=schedTargetYM(x.st,ref);
+  return (t&&ref&&t!==ref)?'Moved':'Outstanding';
+}
+const pmMovedTo=x=>{
+  const b=pmBucket(x), ref=/^\d{4}-\d{2}$/.test(b)?b:(x.d||'').slice(0,7);
+  const t=schedTargetYM(x.st,ref);
+  return (t&&ref&&t!==ref)?t:'';
+};
 // Live Visit Log completions, keyed by serial → [dates]. A PM logged through the
 // Visit Log (instead of a schedule tick) otherwise never shows as done here.
 const VISIT_CLOSE_DAYS=120;
@@ -539,7 +571,8 @@ function pmSched(){
   const keys=Object.keys(groups).sort();
   const done=flt.filter(x=>x.st==='Completed').length;
   const viaV=flt.filter(x=>x._viaVisit).length;
-  const na=flt.filter(x=>pmCat(x.st)==='N/A').length;
+  const na=flt.filter(x=>pmCatOf(x)==='N/A').length;
+  const moved=flt.filter(x=>pmCatOf(x)==='Moved').length;
   const noId=flt.some(x=>!x.id);
   if(!getVisits())refreshVisits(true);   // pull live completions in the background
   const gicon={pic:'👤',site:'🏥',st:'🏷',month:'📅'}[pmGroup];
@@ -548,7 +581,7 @@ function pmSched(){
    <div class="chips">${['All',...stats].map(s=>`<button class="chip${pmStF===s?' on':''}" onclick="pmStF='${s.replace(/'/g,"\\'")}';pmSel.clear();pm()">${esc(s)}</button>`).join('')}</div>
    <div class="chips"><span class="dim" style="align-self:center">Group by</span>${[['pic','👤 PIC'],['site','🏥 Hospital'],['st','🏷 Status'],['month','📅 Month']].map(([k,l])=>`<button class="chip${pmGroup===k?' on':''}" onclick="pmGroup='${k}';pm()">${l}</button>`).join('')}</div>
    ${pmGroup==='pic'&&flt.some(x=>x.picsrc==='check')?'<div class="hint">👤 Green PIC = actual engineer from the official check-list. Plain = pre-assigned on the schedule. ↺ marks a job that was reassigned.</div>':''}
-   <div class="hint">${flt.length} rows · ${done} completed${viaV?' ('+viaV+' from Visit Log)':''}, ${flt.length-done-na} still to do${na?', '+na+' n/a':''}. A tick marks the row <b>Completed</b> in Notion — use the Visit Log only when something abnormal was found.
+   <div class="hint">${flt.length} rows · ${done} completed${viaV?' ('+viaV+' from Visit Log)':''}, ${flt.length-done-na-moved} still to do${moved?', '+moved+' moved to a later month':''}${na?', '+na+' n/a':''}. A tick marks the row <b>Completed</b> in Notion — use the Visit Log only when something abnormal was found.
      ${getVisits()?'':'<span style="color:var(--warn)">⚠ Visit Log not loaded on this device yet — tap ↻ in the Visit Log tab so completions logged there show here.</span>'}</div>
    ${c===BACKLOG?`<div class="hint">Rows scheduled before ${PM_START}, when the monthly PM workflow started — carried-forward work, grouped together instead of one chip per month.</div>`:''}
    ${noId?'<div class="hint" style="color:var(--warn)">⚠ Rows from an old data snapshot can’t be ticked yet — they will after the next nightly refresh.</div>':''}
@@ -558,15 +591,16 @@ function pmSched(){
   updateSelbar();
 }
 function pmSchedLine(x){
-  const cat=pmCat(x.st);
-  const st=cat==='Completed'?'ok':(cat==='N/A'?'warn':'bad');
-  const canTick=!!x.id&&cat!=='Completed';
+  const cat=pmCatOf(x);
+  const st=cat==='Completed'?'ok':(cat==='Outstanding'?'bad':'warn');
+  const mv=pmMovedTo(x);
+  const canTick=!!x.id&&cat!=='Completed'&&cat!=='Moved';
   return `<div class="card"><div class="pmrow">
    ${canTick?`<input type="checkbox" class="pmck" ${pmSel.has(x.id)?'checked':''} onchange="selPM('${esc(x.id)}',this.checked)">`:''}
    <div>
    <div class="row"><h3>${esc(x.site)}</h3><span class="dim">${esc(x.d)}</span></div>
    <div class="dim">${esc(x.item)} · <span class="click" style="color:var(--acc)" onclick="go('item',${JSON.stringify(x.sn).replace(/"/g,'&quot;')})">${esc(x.sn)}</span> · PM ${esc(x.pmno)}</div>
-   <div>${(x.pic||[]).map(p=>`<span class="tag${x.picsrc==='check'?' ok':''}">👤 ${esc(p)}</span>`).join('')}${(x.apic||[]).length?`<span class="tag dim" title="originally assigned">↺ was ${esc(x.apic.join(', '))}</span>`:''}<span class="tag ${st}">${esc(x.st)}</span><span class="tag">${esc(x.grp)}</span>${x._pend?'<span class="tag warn">⏳ syncing</span>':''}${x._viaVisit?`<span class="tag ok">📝 Visit Log ${esc(x._viaVisit)}</span>`:''}${x.src==='check'?'<span class="tag ok">✅ official check-list</span>':''}${x.rel?`<span class="tag">📄 ${esc(x.rel)}</span>`:''}${(x.chk||[]).length?`<span class="tag">✓ ${esc(x.chk.join(', '))}</span>`:''}</div>
+   <div>${(x.pic||[]).map(p=>`<span class="tag${x.picsrc==='check'?' ok':''}">👤 ${esc(p)}</span>`).join('')}${(x.apic||[]).length?`<span class="tag dim" title="originally assigned">↺ was ${esc(x.apic.join(', '))}</span>`:''}<span class="tag ${st}">${esc(x.st)}</span><span class="tag">${esc(x.grp)}</span>${x._pend?'<span class="tag warn">⏳ syncing</span>':''}${x._viaVisit?`<span class="tag ok">📝 Visit Log ${esc(x._viaVisit)}</span>`:''}${mv?`<span class="tag warn">→ moved to ${esc(mv)}</span>`:''}${x.src==='check'?'<span class="tag ok">✅ official check-list</span>':''}${x.rel?`<span class="tag">📄 ${esc(x.rel)}</span>`:''}${(x.chk||[]).length?`<span class="tag">✓ ${esc(x.chk.join(', '))}</span>`:''}</div>
    ${x.addr?`<div class="hint">${esc(x.addr)}</div>`:''}
    ${canTick?`<div><button class="btn sm" onclick='tickPM([${attr(x.id)}])'>✓ Done</button><button class="btn sm sec" onclick='go("visitnew",${attr({site:x.site,sn:x.sn,item:x.item,id:x.id,abn:1})})'>⚠ Abnormal</button></div>`:''}
    </div></div></div>`;
@@ -843,7 +877,10 @@ function anReport(){
   const cmN=m=>DB.svc.filter(s=>(s.d||'').startsWith(m)).length;
   // Count PM by the monthly schedule it belongs to (release month), matching the
   // PM tab. N/A statuses (Replaced/Excluded/No Need…) are not work owed.
-  const pmSched2=m=>PMR.filter(x=>pmBucket(x)===m&&pmCat(x.st)!=='N/A');
+  // Work owed in month m: excludes N/A statuses AND jobs deferred to a later
+  // month (they are counted in the month they moved to, not charged twice).
+  const pmSched2=m=>PMR.filter(x=>pmBucket(x)===m&&!['N/A','Moved'].includes(pmCatOf(x)));
+  const pmMoved=m=>PMR.filter(x=>pmBucket(x)===m&&pmCatOf(x)==='Moved');
   const pmDone=m=>pmSched2(m).filter(x=>x.st==='Completed').length;
   const mx=Math.max(...last3.map(m=>Math.max(cmN(m),pmSched2(m).length)),1);
   const chart=last3.map(m=>`
@@ -866,7 +903,7 @@ function anReport(){
    <div class="row"><h2 style="font-size:16px">📄 Monthly Report — ${repMonth}</h2><button class="btn sm sec noprint" onclick="window.print()">🖨 Print / PDF</button></div>
    <div class="kpis">
      <div class="kpi"><div class="n">${cmN(repMonth)}</div><div class="l">CM cases in ${repMonth}</div></div>
-     <div class="kpi"><div class="n g">${pmDone(repMonth)} / ${sch.length}</div><div class="l">PM completed / scheduled (${sch.length?Math.round(100*pmDone(repMonth)/sch.length):0}%)</div></div>
+     <div class="kpi"><div class="n g">${pmDone(repMonth)} / ${sch.length}</div><div class="l">PM completed / scheduled (${sch.length?Math.round(100*pmDone(repMonth)/sch.length):0}%)${pmMoved(repMonth).length?`<br><span class="dim">${pmMoved(repMonth).length} deferred to a later month, excluded</span>`:''}</div></div>
    </div>
    <div class="card"><h3>Last 3 months — CM &amp; PM volume</h3>${chart}</div>
    <div class="card"><h3>By engineer (PIC) — ${repMonth}</h3>
