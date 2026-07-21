@@ -158,6 +158,18 @@ def aslist(v):
     if isinstance(v, list): return [x for x in v if x]
     return [v] if v else []
 
+def prop_like(props, *subs):
+    """Find a property by SUBSTRING of its normalised name, trying subs in order.
+    Monthly CSVs rename columns between releases — e.g. the June file has
+    'Assigned to' while the June_Kenton file has
+    'Main Person In Charge (Main PIC(s))\\n①/+②'. Without this, PICs vanish."""
+    for s in subs:
+        for k, v in props.items():
+            if s in norm(k):
+                val = pval(v)
+                if val not in ("", None, []): return val
+    return ""
+
 # ----------------------------------------------------------------------------
 # Blocks -> markdown (subset matching the app's md() renderer)
 # ----------------------------------------------------------------------------
@@ -367,7 +379,11 @@ def _pm_row(r, rel=""):
             "item": prop(p, "Item Name"),
             "sn": str(prop(p, "Serial Number")).strip(),
             "pmno": prop(p, "PM no"),            # real name: "PM \nno"
-            "pic": split_names(prop(p, "Assigned to")),
+            # column name varies by release file — see prop_like()
+            "pic": split_names(prop(p, "Assigned to")
+                               or prop_like(p, "person in charge", "main pic")),
+            "chk": split_names(prop(p, "Checked By")),
+            "cd": prop_like(p, "completed date"),
             "st": prop(p, "Status"),
             "grp": prop(p, "Group"),
             "addr": prop(p, "End User Address")}
@@ -379,7 +395,7 @@ def build_pm():
         print("  WARNING: no 'YYYYMMDD_PM Schedule…' database shared with the "
               "integration — falling back to the PM Master List.")
         return build_pm_master()
-    merged = {}
+    merged, dup = {}, [0]
     use = rels[:PM_RELEASES_TO_MERGE]
     for datecode, dbid, title in use[::-1]:      # oldest → newest, newest wins
         rows = query_db(dbid)
@@ -387,14 +403,20 @@ def build_pm():
         print(f"  release {title} -> '{label}': {len(rows)} rows")
         for r in rows:
             row = _pm_row(r, label)
-            key = (row["sn"] or r["id"], row["d"])
+            # Merge on serial + month + PM number, NOT the exact date: a completion
+            # file may carry a slightly different schedule date for the same visit,
+            # which would otherwise duplicate the row instead of updating it.
+            key = (row["sn"].upper() or r["id"], (row["d"] or "")[:7], str(row["pmno"]))
+            if key in merged: dup[0] += 1
             merged[key] = row
     pm = list(merged.values())
     nodate = sum(1 for x in pm if not x["d"])
     bystat = {}
     for x in pm: bystat[f'{x["rel"]} / {x["st"]}'] = bystat.get(f'{x["rel"]} / {x["st"]}', 0) + 1
-    print(f"  {len(pm)} PM rows merged from {len(use)} release(s)"
-          + (f" ({nodate} with unparseable dates)" if nodate else ""))
+    nopic = sum(1 for x in pm if not x["pic"])
+    print(f"  {len(pm)} PM rows merged from {len(use)} release(s); {dup[0]} rows updated by a later file"
+          + (f"; {nodate} with unparseable dates" if nodate else "")
+          + (f"; {nopic} with no PIC" if nopic else ""))
     for k in sorted(bystat): print(f"    {k}: {bystat[k]}")
     return pm
 
