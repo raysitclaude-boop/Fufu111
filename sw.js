@@ -1,4 +1,4 @@
-const CACHE='fujifield-v5.2';
+const CACHE='fujifield-v5.3';
 const ASSETS=['./','index.html','data.enc','dataw.enc','manifest.json','apple-touch-icon.png'];
 // allSettled: dataw.enc may not exist until the first V5 nightly build — don't brick install on a 404
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>Promise.allSettled(ASSETS.map(a=>c.add(a)))).then(()=>self.skipWaiting()))});

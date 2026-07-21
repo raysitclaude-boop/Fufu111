@@ -216,7 +216,29 @@ async function unlock(){
   boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-const APP_VER='v5.2';
+const APP_VER='v5.3';
+// --- HA cluster names -------------------------------------------------------
+// The official HA list has 6 clusters; Hong Kong East and Hong Kong West were
+// merged into Hong Kong Island. Old bundles cached on a phone may still carry
+// the retired names or short forms, so normalise at read time — that way the
+// grouping is right immediately, without waiting for the nightly rebuild.
+const SEC_UNKNOWN='— sector unknown —';
+const SEC_ALIAS={
+  'hk island':'Hong Kong Island','hong kong east':'Hong Kong Island',
+  'hong kong west':'Hong Kong Island','hk east':'Hong Kong Island',
+  'hk west':'Hong Kong Island','hong kong island':'Hong Kong Island',
+  'kowloon central':'Kowloon Central','kln central':'Kowloon Central',
+  'kowloon east':'Kowloon East','kln east':'Kowloon East',
+  'kowloon west':'Kowloon West','kln west':'Kowloon West',
+  'nt east':'New Territories East','new territories east':'New Territories East',
+  'nt west':'New Territories West','new territories west':'New Territories West'
+};
+function SECTOR(v){
+  const k=String(v||'').trim().toLowerCase();
+  if(!k) return SEC_UNKNOWN;
+  return SEC_ALIAS[k]||String(v).trim();
+}
+
 function boot(){
   $('gate').style.display='none';
   ['items','svc','pm','parts','cards','errors'].forEach(k=>DB[k]=DB[k]||[]);
@@ -286,9 +308,12 @@ function drawSites(){
   let html='';
   if(siteFilter==='HA'){
     const bySec={};
-    names.forEach(n=>{const sec=DB.sectors[n]||'— sector unknown —';(bySec[sec]=bySec[sec]||[]).push(n)});
-    const order=['HK Island','Kowloon Central','Kowloon East','Kowloon West','NT East','NT West','— sector unknown —'];
-    order.filter(s=>bySec[s]).forEach(sec=>{
+    names.forEach(n=>{const sec=SECTOR(DB.sectors[n]);(bySec[sec]=bySec[sec]||[]).push(n)});
+    // Canonical HA cluster names (official HA list, 6 clusters since HK East+West merged).
+    // Any sector not in this list is still rendered at the end — never silently dropped.
+    const order=['Hong Kong Island','Kowloon Central','Kowloon East','Kowloon West','New Territories East','New Territories West'];
+    const extra=Object.keys(bySec).filter(s=>!order.includes(s)&&s!==SEC_UNKNOWN).sort();
+    [...order,...extra,SEC_UNKNOWN].filter(s=>bySec[s]).forEach(sec=>{
       html+=`<div class="sys">🗺️ ${esc(sec)}</div>`+bySec[sec].map(n=>siteRow(n,sset[n].n)).join('');
     });
   }else{
@@ -296,14 +321,14 @@ function drawSites(){
   }
   $('list').innerHTML=html||'<div class=dim style=margin-top:10px>No sites match.</div>';
 }
-function siteRow(n,c){return `<div class="card click" onclick="go('site',${JSON.stringify(n).replace(/"/g,'&quot;')})"><div class="row"><h3>${esc(n)}</h3><span class="dim">${c} items</span></div>${DB.sectors[n]?`<div class="dim">🗺️ ${esc(DB.sectors[n])}</div>`:''}</div>`}
+function siteRow(n,c){return `<div class="card click" onclick="go('site',${JSON.stringify(n).replace(/"/g,'&quot;')})"><div class="row"><h3>${esc(n)}</h3><span class="dim">${c} items</span></div>${DB.sectors[n]?`<div class="dim">🗺️ ${esc(SECTOR(DB.sectors[n]))}</div>`:''}</div>`}
 function site(name){
   const items=DB.items.filter(i=>(i.site||'(no site)')===name);
   const act=items.filter(i=>i.status!=='Retired'), ret=items.filter(i=>i.status==='Retired');
   const bySys={}; act.forEach(i=>{const k=i.sysno||'— no system # —';(bySys[k]=bySys[k]||[]).push(i)});
   const keys=Object.keys(bySys).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   V().innerHTML=`<span class="back" onclick="go('sites')">← Sites</span><h2>${esc(name)}</h2>
-   <div class="dim">${DB.sectors[name]?('🗺️ '+esc(DB.sectors[name])+' · '):''}${act.length} active · ${ret.length} retired</div>
+   <div class="dim">${DB.sectors[name]?('🗺️ '+esc(SECTOR(DB.sectors[name]))+' · '):''}${act.length} active · ${ret.length} retired</div>
    ${keys.map(k=>`<div class="sys">${esc(k)}</div>`+bySys[k].map(i=>itemLine(i,false)).join('')).join('')}
    ${ret.length?`<div class="sys" style="border-color:var(--bad)">Retired / replaced</div>`+ret.map(i=>itemLine(i,false)).join(''):''}`;
 }
