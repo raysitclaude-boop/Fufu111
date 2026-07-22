@@ -21,6 +21,15 @@ jobs:
           FIELD_PW: "${{ secrets.FIELD_PW }}"
           WORKER_PW: "${{ secrets.WORKER_PW }}"
           WRITE_KEY: "${{ secrets.WRITE_KEY }}"
+      # Static Item Master viewer. NOT committed — it has no login and would
+      # expose every serial/site if pushed to the public Pages site. Uploaded as
+      # a PRIVATE workflow artifact instead: download it from the Actions run.
+      - run: python3 build/export_item_html.py data/bundle.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: item-master-html
+          path: item-master.html
+          retention-days: 14
       - name: Commit refreshed bundles (raw JSON never committed)
         run: |
           rm -f data/*.json
