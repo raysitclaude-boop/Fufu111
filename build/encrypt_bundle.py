@@ -30,7 +30,22 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 SRC = "data/bundle.json"
-WORKER_KEYS = ["asof", "items", "sectors", "pm"]   # worker bundle contents
+# Worker bundle contents. "svc" is included so field engineers can check a
+# machine's past CM history from the item screen — but see worker_svc(): the
+# free-text 'Actions Taken' is stripped out, because it can contain credentials
+# or WiFi keys R typed in, which the shared-password boundary keeps out of the
+# worker's offline file.
+WORKER_KEYS = ["asof", "items", "sectors", "pm", "svc"]
+
+def worker_svc(svc):
+    """Structured CM fields only for the worker bundle: date, machine, serial,
+    problem types, error codes, engineer, symptoms, parts, status — but NOT the
+    free-text Actions Taken ('act')."""
+    keep = ("d", "site", "mach", "sn", "pt", "err", "pic", "sym", "parts", "st", "l2", "rv")
+    out = []
+    for s in svc or []:
+        out.append({k: s.get(k) for k in keep if k in s})
+    return out
 
 def encrypt(dst, pw, obj):
     plaintext = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -67,6 +82,8 @@ def main():
 
     if wpw:
         wb = {k: bundle.get(k) for k in WORKER_KEYS if k in bundle}
+        if "svc" in wb:
+            wb["svc"] = worker_svc(wb["svc"])   # drop free-text before it leaves the build
         wb["role"] = "worker"
         if wkey:
             wb["wkey"] = wkey

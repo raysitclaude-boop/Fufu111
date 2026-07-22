@@ -259,6 +259,7 @@ def build_items():
             skipped += 1; continue
         site = prop(p, "Site") or ""
         it = {"sn": sn,
+              "pid": r["id"],                       # Notion page id — needed to write network config back
               "title": prop(p, "Asset Identifier(Ref)"),
               "status": prop(p, "Status") or "Active",
               "model": prop(p, "Machine Type"),
@@ -267,7 +268,15 @@ def build_items():
               "loc": prop(p, "Location/Block"),
               "site": site,
               "cluster": prop(p, "Cluster"),
-              "addr": prop(p, "Address")}
+              "addr": prop(p, "Address"),
+              # Network config recorded during maintenance (new-policy fields).
+              # Snapshot: latest values live on the asset itself.
+              "mcver": prop(p, "MC Version"),
+              "ip": prop(p, "IP Address"),
+              "subnet": prop(p, "Subnet Mask"),
+              "gw": prop(p, "Default Gateway"),
+              "netd": prop(p, "Network Updated"),
+              "netby": prop(p, "Network Updated By")}
         items.append(it)
         # Sector map: first NON-EMPTY value wins. (Previously first-seen won, so a
         # site whose first row had a blank HA Cluster stayed unmapped forever.)
@@ -299,8 +308,16 @@ def build_svc():
         pic = aslist(prop(p, "PIC"))
         if not d and not site and not pic:   # empty 新的問題 stubs
             continue
-        parts_raw = str(prop(p, "Parts no. (if used)") or "")
-        parts = [x.strip() for x in re.split(r"[;\n,]+", parts_raw) if x.strip()]
+        # "Parts no. (if used)" is a MULTI-SELECT, so prop() returns a list —
+        # one clean string per part. The old code did str(list), which produced
+        # a literal "['Hand Switch P/N: 571-64136']" (brackets + quotes baked in)
+        # and then tried to split it as text. Take the list items as-is; only a
+        # plain-text field needs splitting.
+        parts_val = prop(p, "Parts no. (if used)")
+        if isinstance(parts_val, list):
+            parts = [str(x).strip() for x in parts_val if str(x).strip()]
+        else:
+            parts = [x.strip() for x in re.split(r"[;\n]+", str(parts_val or "")) if x.strip()]
         svc.append({"d": d or "", "site": site,
                     "mach": aslist(prop(p, "Machines Types")),
                     "sn": aslist(prop(p, "S/N")),
@@ -600,19 +617,40 @@ PN_LABEL_RE = re.compile(r"\b(?:P\s*/\s*N|PN|P\s*/\s*M)\b\s*:?\s*", re.I)
 BOARD_CODE_RE = re.compile(r"\b([A-Z]{3}\d{2}[A-Z])\b")
 BARE_PN_RE = re.compile(r"\b(ACC\d{4}|[A-Z0-9]{2,}[-_][A-Z0-9\-_]{4,})\s*$", re.I)
 
+def _unwrap(s):
+    """Strip stray Python-list punctuation that leaked in when a multi-select
+    field was stringified, e.g.
+        "['Hand Switch P/N: 571-64136']"          -> "Hand Switch P/N: 571-64136"
+        "[' Board Assembly P/N: 857Y...'] BCN65A" -> "Board Assembly P/N: 857Y... BCN65A"
+    '[' and ']' never occur in a real part string, so removing them is safe."""
+    s = str(s).strip()
+    while len(s) >= 2 and s[0] in "[(" and s[-1] in ")]":   # wholly wrapped
+        s = s[1:-1].strip()
+    s = re.sub(r"\[\s*['\"]", " ", s)    # a stray  ['  or  ["
+    s = re.sub(r"['\"]\s*\]", " ", s)    # a stray  ']  or  "]
+    s = s.strip().strip("'\"").strip()
+    return re.sub(r"\s{2,}", " ", s)
+
 def parse_part(raw):
     """'BCN65A Board Assembly P/N: 857Y120043C' -> ('Board Assembly BCN65A', '857Y120043C')"""
-    s = str(raw).strip()
+    s = _unwrap(raw)
     m = PN_LABEL_RE.search(s)
     if m:
-        name, pn = s[:m.start()], s[m.end():].strip()
+        name = s[:m.start()]
+        # Part numbers are a single token (571-64136, 857Y120043C, ACC3386, …).
+        # Take just that token; anything after it (e.g. a trailing board code) goes
+        # back onto the name so the code-reordering below can place it correctly.
+        after = s[m.end():].strip().split(None, 1)
+        pn = after[0].strip() if after else ""
+        if len(after) > 1:
+            name = (name + " " + after[1]).strip()
     else:
         m2 = BARE_PN_RE.search(s)          # no label, but a trailing ACCnnnn / dashed code
         if m2:
             name, pn = s[:m2.start()], m2.group(1).strip()
         else:
             name, pn = s, ""
-    pn = re.sub(r"\s+", " ", pn).strip().rstrip(".,;")
+    pn = re.sub(r"\s+", "", pn).strip().rstrip(".,;")
 
     name = re.sub(r"\s{2,}", " ", name).strip().strip(":").strip()
     cm = BOARD_CODE_RE.search(name)
