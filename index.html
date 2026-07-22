@@ -216,7 +216,7 @@ async function unlock(){
   boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-const APP_VER='v5.3';
+const APP_VER='v5.4';
 // --- HA cluster names -------------------------------------------------------
 // The official HA list has 6 clusters; Hong Kong East and Hong Kong West were
 // merged into Hong Kong Island. Old bundles cached on a phone may still carry
@@ -276,13 +276,13 @@ function svcLine(s){
 // ---------- router ----------
 function go(p,arg){
   if(ROLE==='worker'&&['fix','parts','analysis','card','part'].includes(p))p='pm';
-  if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox'].includes(p))PREV=route;
+  if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox','assetnet'].includes(p))PREV=route;
   route={p,arg}; render(); window.scrollTo(0,0);
 }
 function render(){
-  const map={item:'serial',site:'sites',card:'fix',part:'parts',visitnew:'pm',visitedit:'pm',logresult:'pm',mismatch:'serial',outbox:'pm'};
+  const map={item:'serial',site:'sites',card:'fix',part:'parts',visitnew:'pm',visitedit:'pm',logresult:'pm',mismatch:'serial',outbox:'pm',assetnet:'serial'};
   ['sites','serial','fix','parts','pm','analysis'].forEach(k=>$('nb-'+k)?.classList.toggle('on',route.p===k||map[route.p]===k));
-  ({sites,serial,fix,parts,pm,analysis,item,site,card,part,visitnew,visitedit,logresult,mismatch,outbox})[route.p](route.arg);
+  ({sites,serial,fix,parts,pm,analysis,item,site,card,part,visitnew,visitedit,logresult,mismatch,outbox,assetnet})[route.p](route.arg);
 }
 
 // ---------- Sites ----------
@@ -353,9 +353,55 @@ function item(sn){
    <div class="dim">${esc(i.model||'')} · ${esc(i.type||'')} ${i.sysno?('· System <b style=color:var(--acc)>'+esc(i.sysno)+'</b>'):''}</div>
    <div class="dim">${esc(i.site||'')} ${i.loc?('· '+esc(i.loc)):''}</div>${i.addr?`<div class="hint">${esc(i.addr)}</div>`:''}
    <button class="btn sec sm" onclick="go('mismatch',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">🔁 Serial on the unit is different? Report it</button></div>
+   ${netEligible(i)?netCard(i):''}
    ${set.length?`<div class="sys">Same system set (${esc(i.sysno)})</div>`+set.map(x=>itemLine(x,false)).join(''):''}
-   ${ROLE==='worker'?'':`<div class="sys">Service history (${hist.length})</div>
-   ${hist.length?hist.map(svcLine).join(''):'<div class=dim>No CM records reference this serial.</div>'}`}`;
+   <div class="sys">Service history (${hist.length})</div>
+   ${hist.length?hist.map(svcLine).join(''):'<div class=dim>No CM records reference this serial.</div>'}`;
+}
+
+// --- MC version / IP recording (new maintenance policy) ---------------------
+// Applies to the console-bearing machines only: Go Plus, Nano, FDR Smart.
+// DRYPIX SMART is a printer (Asset Type ≠ Machine) so it is excluded.
+const NET_MODELS=/(go\s*\+|go\s*plus|nano|fdr\s*smart|fgxr)/i;
+function netEligible(i){
+  const t=(i.type||'').toLowerCase();
+  return (t==='machine'||t==='')&&NET_MODELS.test(i.model||'');
+}
+const ipOK=v=>v===''||(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(v)&&v.split('.').every(o=>+o<=255));
+function netCard(i){
+  const has=i.ip||i.mcver||i.subnet||i.gw;
+  const row=(l,v)=>`<div class="row" style="margin:2px 0"><span class="dim">${l}</span><b>${esc(v||'—')}</b></div>`;
+  return `<div class="card">
+   <div class="row"><h3>🖥️ MC version / network</h3>${i.netd?`<span class="dim">${esc(i.netd)}${i.netby?(' · '+esc(i.netby)):''}</span>`:''}</div>
+   ${has?row('MC version',i.mcver)+row('IP address',i.ip)+row('Subnet mask',i.subnet)+row('Default gateway',i.gw)
+        :'<div class="dim">Not recorded yet.</div>'}
+   <button class="btn sm" style="margin-top:8px" onclick="go('assetnet',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">📝 ${has?'Update':'Record'} MC version / IP</button></div>`;
+}
+function assetnet(sn){
+  const need=needIdentity();
+  if(need==='setkey'||need==='setname'){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span>`+identityCard();return}
+  if(need){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><div class="card"><div class="dim">${esc(need)}</div></div>`;return}
+  const i=DB.items.find(x=>x.sn===sn); if(!i){go('serial');return}
+  V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>🖥️ Record MC version / IP</h2>
+   <div class="hint">Writes the console MC version and network settings onto this asset in the Item Master. Latest snapshot — this overwrites the previous values, stamped with your name and today's date.</div>
+   <div class="card"><h3>${esc(i.sn)}</h3><div class="dim">${esc(i.model||'')} · ${esc(i.site||'')} ${i.sysno?('· System '+esc(i.sysno)):''}</div></div>
+   <div class="fld"><label>MC version</label><input type="text" id="n_mc" value="${esc(i.mcver||'')}" placeholder="e.g. V03.51" autocapitalize="characters" autocorrect="off"></div>
+   <div class="fld"><label>IP address</label><input type="text" id="n_ip" value="${esc(i.ip||'')}" placeholder="192.168.1.10" inputmode="decimal" autocorrect="off"></div>
+   <div class="fld"><label>Subnet mask</label><input type="text" id="n_sub" value="${esc(i.subnet||'')}" placeholder="255.255.255.0" inputmode="decimal" autocorrect="off"></div>
+   <div class="fld"><label>Default gateway</label><input type="text" id="n_gw" value="${esc(i.gw||'')}" placeholder="192.168.1.1" inputmode="decimal" autocorrect="off"></div>
+   <button class="btn" onclick="submitNet(${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">Save (queues if offline)</button>`;
+}
+function submitNet(sn){
+  const i=DB.items.find(x=>x.sn===sn); if(!i)return;
+  if(!i.pid){alert('This asset predates the network-config update — run the nightly build once, then try again.');return}
+  const mc=$('n_mc').value.trim(), ip=$('n_ip').value.trim(), sub=$('n_sub').value.trim(), gw=$('n_gw').value.trim();
+  for(const [v,l] of [[ip,'IP address'],[sub,'Subnet mask'],[gw,'Default gateway']])
+    if(!ipOK(v)){alert(l+' must be a valid IPv4 address like 192.168.1.10, or left blank.');return}
+  if(!mc&&!ip&&!sub&&!gw){alert('Enter at least one value.');return}
+  enqueue('PATCH','/asset-net/'+i.pid,{set:{mcver:mc,ip,subnet:sub,gw}},`Net ${i.site} ${sn}: ${ip||mc}`);
+  // optimistic local update so the value shows on the item screen right away
+  i.mcver=mc; i.ip=ip; i.subnet=sub; i.gw=gw; i.netby=myName(); i.netd=new Date().toISOString().slice(0,10);
+  go('item',sn);
 }
 
 // ==================================================================
