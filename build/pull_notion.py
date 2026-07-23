@@ -504,11 +504,14 @@ def build_pm():
     by_serial = {}     # (release month, serial) -> [keys], for the fallback match
     claimed = set()    # keys a check-list row has already completed
     pmno_fix = [0]     # completions rescued by matching on serial instead of PM no
+    check_months = set()   # release-months that have an official check-list
     use = rels[:PM_RELEASES_TO_MERGE]
     for datecode, dbid, title in use[::-1]:      # oldest → newest, newest wins
         rows = query_db(dbid)
         label = release_label(datecode, title)
         kind = release_kind(datecode, label_to_ym(label))
+        if kind == "check":
+            check_months.add(label_to_ym(label))
         print(f"  {kind:8} {title} -> '{label}': {len(rows)} rows")
         for r in rows:
             row = _pm_row(r, label, kind)
@@ -565,7 +568,16 @@ def build_pm():
                 merged[key] = row
                 if sn:
                     by_serial.setdefault((row["relm"], sn), []).append(key)
-    pm = list(merged.values())
+    # Check-list is authoritative for KPI. Once a month has an official
+    # check-list, IT is the completion record — the pre-assign schedule was only
+    # a pre-visit list (who to send). So for a check-list month, drop any row the
+    # check-list never confirmed (src still 'schedule' = unmatched pre-assign).
+    # Months with no check-list yet (e.g. the current month) keep the schedule
+    # for the pre-visit list and a provisional count.
+    before = len(merged)
+    pm = [x for x in merged.values()
+          if x["relm"] not in check_months or x["src"] == "check"]
+    dropped_preassign = before - len(pm)
     nodate = sum(1 for x in pm if not x["d"])
     bystat = {}
     for x in pm:
@@ -580,6 +592,8 @@ def build_pm():
           + (f"; {blank[0]} empty import rows dropped" if blank[0] else "")
           + (f"; {pmno_fix[0]} completions matched on serial (PM no disagreed "
              f"between schedule and check list)" if pmno_fix[0] else "")
+          + (f"; {dropped_preassign} unconfirmed pre-assign rows dropped from "
+             f"check-list month(s) {sorted(check_months)}" if dropped_preassign else "")
           + (f"; {nodate} with no schedule date" if nodate else "")
           + (f"; {nopic} with no PIC" if nopic else ""))
     for k in sorted(bystat): print(f"    {k}: {bystat[k]}")
