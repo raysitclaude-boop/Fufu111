@@ -367,12 +367,14 @@ function item(sn){
 //   • Retrofit units (own console/IP; may be tagged any asset type)
 //   • the console-bearing imaging machines: Go Plus, Nano, FDR Smart
 // Bare detector/panels and printers (e.g. DRYPIX SMART) are excluded.
-const NET_MODELS=/(go\s*\+|go\s*plus|nano|fdr\s*smart|fgxr)/i;
+const NET_MODELS=/(go\s*\+|go\s*plus|nano|fdr\s*smart|fgxr|retrofit)/i;
 function netEligible(i){
   const m=i.model||'', t=(i.type||'').toLowerCase();
-  if(t==='console/pc')return true;      // PC / console items
-  if(/retrofit/i.test(m))return true;   // retrofit console, any asset type
-  return (t==='machine'||t==='')&&NET_MODELS.test(m);
+  if(t==='console/pc')return true;   // PC / console items
+  // Imaging systems (Go Plus / Nano / FDR Smart / Retrofit) qualify on MODEL
+  // alone — some are tagged Machine, some Detector/Panel, so don't gate on type.
+  // Printers (DRYPIX SMART/EDGE/PRIMA) don't match NET_MODELS, so stay excluded.
+  return NET_MODELS.test(m);
 }
 const ipOK=v=>v===''||(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(v)&&v.split('.').every(o=>+o<=255));
 function netCard(i){
