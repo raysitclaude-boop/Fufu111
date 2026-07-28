@@ -216,7 +216,7 @@ async function unlock(){
   boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-const APP_VER='v5.6';
+const APP_VER='v5.7';
 // --- HA cluster names -------------------------------------------------------
 // The official HA list has 6 clusters; Hong Kong East and Hong Kong West were
 // merged into Hong Kong Island. Old bundles cached on a phone may still carry
@@ -276,13 +276,13 @@ function svcLine(s){
 // ---------- router ----------
 function go(p,arg){
   if(ROLE==='worker'&&['fix','parts','analysis','card','part'].includes(p))p='pm';
-  if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox','assetnet'].includes(p))PREV=route;
+  if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox','assetnet','assetinfo'].includes(p))PREV=route;
   route={p,arg}; render(); window.scrollTo(0,0);
 }
 function render(){
-  const map={item:'serial',site:'sites',card:'fix',part:'parts',visitnew:'pm',visitedit:'pm',logresult:'pm',mismatch:'serial',outbox:'pm',assetnet:'serial'};
+  const map={item:'serial',site:'sites',card:'fix',part:'parts',visitnew:'pm',visitedit:'pm',logresult:'pm',mismatch:'serial',outbox:'pm',assetnet:'serial',assetinfo:'serial'};
   ['sites','serial','fix','parts','pm','analysis'].forEach(k=>$('nb-'+k)?.classList.toggle('on',route.p===k||map[route.p]===k));
-  ({sites,serial,fix,parts,pm,analysis,item,site,card,part,visitnew,visitedit,logresult,mismatch,outbox,assetnet})[route.p](route.arg);
+  ({sites,serial,fix,parts,pm,analysis,item,site,card,part,visitnew,visitedit,logresult,mismatch,outbox,assetnet,assetinfo})[route.p](route.arg);
 }
 
 // ---------- Sites ----------
@@ -352,6 +352,8 @@ function item(sn){
    <div>${esc(i.title||'')}</div>
    <div class="dim">${esc(i.model||'')} · ${esc(i.type||'')} ${i.sysno?('· System <b style=color:var(--acc)>'+esc(i.sysno)+'</b>'):''}</div>
    <div class="dim">${esc(i.site||'')} ${i.loc?('· '+esc(i.loc)):''}</div>${i.addr?`<div class="hint">${esc(i.addr)}</div>`:''}
+   ${i.remark?`<div class="hint">📝 ${esc(i.remark)}</div>`:''}${i.infod?`<div class="dim" style="margin-top:2px">✏️ info updated ${esc(i.infod)}${i.infoby?(' · '+esc(i.infoby)):''}</div>`:''}
+   <button class="btn sm" style="margin-top:8px" onclick="go('assetinfo',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">✏️ Update item info (model / status / remark)</button>
    <button class="btn sec sm" onclick="go('mismatch',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">🔁 Serial on the unit is different? Report it</button></div>
    ${netEligible(i)?netCard(i):''}
    ${set.length?`<div class="sys">Same system set (${esc(i.sysno)})</div>`+set.map(x=>itemLine(x,false)).join(''):''}
@@ -374,39 +376,71 @@ function netEligible(i){
 }
 const ipOK=v=>v===''||(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(v)&&v.split('.').every(o=>+o<=255));
 function netCard(i){
-  const has=i.ip||i.mcver||i.subnet||i.gw;
+  const has=i.ip||i.mcver||i.subnet||i.gw||i.apl||i.login||i.pw;
   const row=(l,v)=>`<div class="row" style="margin:2px 0"><span class="dim">${l}</span><b>${esc(v||'—')}</b></div>`;
   return `<div class="card">
-   <div class="row"><h3>🖥️ MC version / network</h3>${i.netd?`<span class="dim">${esc(i.netd)}${i.netby?(' · '+esc(i.netby)):''}</span>`:''}</div>
-   ${has?row('MC version',i.mcver)+row('IP address',i.ip)+row('Subnet mask',i.subnet)+row('Default gateway',i.gw)
+   <div class="row"><h3>🖥️ MC version / console</h3>${i.netd?`<span class="dim">${esc(i.netd)}${i.netby?(' · '+esc(i.netby)):''}</span>`:''}</div>
+   ${has?row('MC version',i.mcver)+row('Console APL software',i.apl)+row('IP address',i.ip)+row('Subnet mask',i.subnet)+row('Default gateway',i.gw)+row('Console login',i.login)+row('Console password',i.pw)
         :'<div class="dim">Not recorded yet.</div>'}
-   <button class="btn sm" style="margin-top:8px" onclick="go('assetnet',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">📝 ${has?'Update':'Record'} MC version / IP</button></div>`;
+   <button class="btn sm" style="margin-top:8px" onclick="go('assetnet',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">📝 ${has?'Update':'Record'} console info</button></div>`;
 }
 function assetnet(sn){
   const need=needIdentity();
   if(need==='setkey'||need==='setname'){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span>`+identityCard();return}
   if(need){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><div class="card"><div class="dim">${esc(need)}</div></div>`;return}
   const i=DB.items.find(x=>x.sn===sn); if(!i){go('serial');return}
-  V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>🖥️ Record MC version / IP</h2>
-   <div class="hint">Writes the console MC version and network settings onto this asset in the Item Master. Latest snapshot — this overwrites the previous values, stamped with your name and today's date.</div>
+  V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>🖥️ Record console info</h2>
+   <div class="hint">Writes the console MC version, software, network and login onto this asset in the Item Master. Latest snapshot — overwrites previous values, stamped with your name and today's date.</div>
    <div class="card"><h3>${esc(i.sn)}</h3><div class="dim">${esc(i.model||'')} · ${esc(i.site||'')} ${i.sysno?('· System '+esc(i.sysno)):''}</div></div>
    <div class="fld"><label>MC version</label><input type="text" id="n_mc" value="${esc(i.mcver||'')}" placeholder="e.g. V03.51" autocapitalize="characters" autocorrect="off"></div>
+   <div class="fld"><label>Console APL software</label><input type="text" id="n_apl" value="${esc(i.apl||'')}" placeholder="e.g. V12.1" autocapitalize="characters" autocorrect="off"></div>
    <div class="fld"><label>IP address</label><input type="text" id="n_ip" value="${esc(i.ip||'')}" placeholder="192.168.1.10" inputmode="decimal" autocorrect="off"></div>
    <div class="fld"><label>Subnet mask</label><input type="text" id="n_sub" value="${esc(i.subnet||'')}" placeholder="255.255.255.0" inputmode="decimal" autocorrect="off"></div>
    <div class="fld"><label>Default gateway</label><input type="text" id="n_gw" value="${esc(i.gw||'')}" placeholder="192.168.1.1" inputmode="decimal" autocorrect="off"></div>
+   <div class="fld"><label>Console login (AC)</label><input type="text" id="n_login" value="${esc(i.login||'')}" placeholder="account" autocapitalize="off" autocorrect="off"></div>
+   <div class="fld"><label>Console password</label><input type="text" id="n_pw" value="${esc(i.pw||'')}" placeholder="password" autocapitalize="off" autocorrect="off"></div>
    <button class="btn" onclick="submitNet(${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">Save (queues if offline)</button>`;
 }
 function submitNet(sn){
   const i=DB.items.find(x=>x.sn===sn); if(!i)return;
-  if(!i.pid){alert('This asset predates the network-config update — run the nightly build once, then try again.');return}
-  const mc=$('n_mc').value.trim(), ip=$('n_ip').value.trim(), sub=$('n_sub').value.trim(), gw=$('n_gw').value.trim();
+  if(!i.pid){alert('This asset predates the console-config update — run the nightly build once, then try again.');return}
+  const mc=$('n_mc').value.trim(), apl=$('n_apl').value.trim(), ip=$('n_ip').value.trim(), sub=$('n_sub').value.trim(), gw=$('n_gw').value.trim(), login=$('n_login').value.trim(), pw=$('n_pw').value.trim();
   for(const [v,l] of [[ip,'IP address'],[sub,'Subnet mask'],[gw,'Default gateway']])
     if(!ipOK(v)){alert(l+' must be a valid IPv4 address like 192.168.1.10, or left blank.');return}
-  if(!mc&&!ip&&!sub&&!gw){alert('Enter at least one value.');return}
-  enqueue('PATCH','/asset-net/'+i.pid,{set:{mcver:mc,ip,subnet:sub,gw}},`Net ${i.site} ${sn}: ${ip||mc}`);
-  // optimistic local update so the value shows on the item screen right away
-  i.mcver=mc; i.ip=ip; i.subnet=sub; i.gw=gw; i.netby=myName(); i.netd=new Date().toISOString().slice(0,10);
+  if(!mc&&!apl&&!ip&&!sub&&!gw&&!login&&!pw){alert('Enter at least one value.');return}
+  enqueue('PATCH','/asset-net/'+i.pid,{set:{mcver:mc,apl,ip,subnet:sub,gw,login,pw}},`Console ${i.site} ${sn}: ${ip||mc||apl}`);
+  // optimistic local update so values show on the item screen right away
+  i.mcver=mc; i.apl=apl; i.ip=ip; i.subnet=sub; i.gw=gw; i.login=login; i.pw=pw; i.netby=myName(); i.netd=new Date().toISOString().slice(0,10);
   go('item',sn);
+}
+// --- Update item info (model / status / remark) — direct edit, any item -------
+const ITEM_STATUS=['Active','Retired','Relocated','Not confirmed'];
+function assetinfo(sn){
+  const need=needIdentity();
+  if(need==='setkey'||need==='setname'){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span>`+identityCard();return}
+  if(need){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><div class="card"><div class="dim">${esc(need)}</div></div>`;return}
+  const i=DB.items.find(x=>x.sn===sn); if(!i){go('serial');return}
+  const models=[...new Set(DB.items.map(x=>x.model).filter(Boolean))].sort();
+  V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>✏️ Update item info</h2>
+   <div class="hint">Writes Model / Status / Remark straight onto this asset in the Item Master, stamped with your name and today's date. (Serial changes still go through "Report" — this doesn't change the serial.)</div>
+   <div class="card"><h3>${esc(i.sn)}</h3><div class="dim">${esc(i.site||'')} ${i.sysno?('· System '+esc(i.sysno)):''}</div></div>
+   <div class="fld"><label>Model (machine type)</label><input type="text" id="f_model" list="modellist" value="${esc(i.model||'')}" autocorrect="off"><datalist id="modellist">${models.map(m=>`<option value="${esc(m)}">`).join('')}</datalist></div>
+   <div class="fld"><label>Status</label>
+     <div class="chips">${ITEM_STATUS.map(s=>`<button type="button" class="chip${((infoStatus||i.status||'Active')===s)?' on':''}" onclick="infoStatus='${s}';assetinfo(${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">${s}</button>`).join('')}</div></div>
+   <div class="fld"><label>Quick remark</label><textarea id="f_rmk" placeholder="e.g. relocated to Room 3; awaiting parts">${esc(i.remark||'')}</textarea></div>
+   <button class="btn" onclick="submitInfo(${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">Save (queues if offline)</button>`;
+}
+let infoStatus=null;
+function submitInfo(sn){
+  const i=DB.items.find(x=>x.sn===sn); if(!i)return;
+  if(!i.pid){alert('This asset predates the item-info update — run the nightly build once, then try again.');return}
+  const model=$('f_model').value.trim(), status=infoStatus||i.status||'Active', remark=$('f_rmk').value.trim();
+  if(!ITEM_STATUS.includes(status)){alert('Pick a status.');return}
+  const set={status,remark}; if(model)set.model=model;
+  enqueue('PATCH','/asset-info/'+i.pid,set,`Info ${i.site} ${sn}: ${model||i.model} / ${status}`);
+  // optimistic local update
+  if(model)i.model=model; i.status=status; i.remark=remark; i.infoby=myName(); i.infod=new Date().toISOString().slice(0,10);
+  infoStatus=null; go('item',sn);
 }
 
 // ==================================================================
