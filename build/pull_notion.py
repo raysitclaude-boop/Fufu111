@@ -269,14 +269,19 @@ def build_items():
               "site": site,
               "cluster": prop(p, "Cluster"),
               "addr": prop(p, "Address"),
-              # Network config recorded during maintenance (new-policy fields).
-              # Snapshot: latest values live on the asset itself.
+              "remark": prop(p, "Remarks"),
+              # Network + console config recorded during maintenance (snapshot on the asset).
               "mcver": prop(p, "MC Version"),
+              "apl": prop(p, "Console APL Software"),
               "ip": prop(p, "IP Address"),
               "subnet": prop(p, "Subnet Mask"),
               "gw": prop(p, "Default Gateway"),
+              "login": prop(p, "Console Login"),
+              "pw": prop(p, "Console Password"),
               "netd": prop(p, "Network Updated"),
-              "netby": prop(p, "Network Updated By")}
+              "netby": prop(p, "Network Updated By"),
+              "infoby": prop(p, "Info Updated By"),
+              "infod": prop(p, "Info Updated")}
         items.append(it)
         # Sector map: first NON-EMPTY value wins. (Previously first-seen won, so a
         # site whose first row had a blank HA Cluster stayed unmapped forever.)
