@@ -216,7 +216,7 @@ async function unlock(){
   boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-const APP_VER='v5.7';
+const APP_VER='v5.8';
 // --- HA cluster names -------------------------------------------------------
 // The official HA list has 6 clusters; Hong Kong East and Hong Kong West were
 // merged into Hong Kong Island. Old bundles cached on a phone may still carry
@@ -239,6 +239,29 @@ function SECTOR(v){
   return SEC_ALIAS[k]||String(v).trim();
 }
 
+// Hospital abbreviations — so searching "QEH", "PYNEH", "PWH"… finds the site.
+// [name-fragment (lowercase), abbreviation]. First match is shown on the card.
+const SITE_ABBR=[
+  ['pamela youde','PYNEH'],['queen elizabeth','QEH'],['queen mary','QMH'],['prince of wales','PWH'],
+  ['lai king','PMH-LKB'],['princess margaret','PMH'],['kwong wah','KWH'],
+  ['united christian nethersole','UCN'],['united christian','UCH'],['tuen mun hospital','TMH'],
+  ['tuen mun medlab','TM Medlab'],['north district','NDH'],['alice ho miu ling','AHNH'],['alice homiu ling','AHNH'],
+  ['tseung kwan o','TKOH'],['pok oi','POH'],['yan chai','YCH'],['kwai chung','KCH'],['caritas medical','CMC'],
+  ['ruttonjee','RH'],['st john','SJH'],['st. john','SJH'],['tung wah eastern','TWEH'],
+  ['tung wah hospital','TWH'],['tung wah group of hospitals (north point','TWGHs-NP'],['tung wah college','TWC'],
+  ['grantham','GH'],['fung yiu king','FYKH'],['maclehose','MMRC'],['duchess of kent','DKCH'],
+  ['kowloon hospital','KH'],['buddhist','HKBH'],["children's hospital",'HKCH'],['haven of hope','HHH'],
+  ['heaven of hope','HHH'],['north lantau','NLTH'],['shatin hospital','ShH'],['tai po','TPH'],
+  ['cheshire home shatin','CHShatin'],['cheshire home','CHK'],['cheshire home chung hom kok','CHK'],
+  ['tin shui wai','TSWH'],['wong tai sin','WTSH'],['our lady of maryknoll','OLMH'],['lady of maryknoll','OLMH'],
+  ['conde','CHCSJ'],['januário','CHCSJ'],['januario','CHCSJ'],['hong kong sanatorium','HKSH'],
+  ['baptist','HKBH-P'],["st paul's",'SPH'],['adventist','HKAH']
+];
+function siteAbbr(name){
+  const l=String(name||'').toLowerCase();
+  return SITE_ABBR.filter(([k])=>l.includes(k)).map(([,a])=>a);
+}
+
 function boot(){
   $('gate').style.display='none';
   ['items','svc','pm','parts','cards','errors'].forEach(k=>DB[k]=DB[k]||[]);
@@ -247,7 +270,7 @@ function boot(){
   // normalise engineer names once, so old bundles are fixed without a rebuild
   DB.pm.forEach(x=>{x.pic=canonList(x.pic);x.apic=canonList(x.apic);x.chk=canonList(x.chk);});
   DB.svc.forEach(s=>{s.pic=canonList(s.pic);});
-  if(ROLE==='worker')['fix','parts','analysis'].forEach(k=>{const b=$('nb-'+k);if(b)b.style.display='none';});
+  if(ROLE==='worker')['fix','analysis'].forEach(k=>{const b=$('nb-'+k);if(b)b.style.display='none';});
   $('asof').textContent=APP_VER+' · Data: '+DB.asof;
   updateSyncBadge();flushOutbox();
   go(ROLE==='worker'?'pm':'sites');
@@ -275,7 +298,7 @@ function svcLine(s){
 
 // ---------- router ----------
 function go(p,arg){
-  if(ROLE==='worker'&&['fix','parts','analysis','card','part'].includes(p))p='pm';
+  if(ROLE==='worker'&&['fix','analysis','card','part'].includes(p))p='pm';
   if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox','assetnet','assetinfo'].includes(p))PREV=route;
   route={p,arg}; render(); window.scrollTo(0,0);
 }
@@ -304,7 +327,7 @@ function drawSites(){
     }
     (sset[s]=sset[s]||{n:0,cl}).n++;
   });
-  const names=Object.keys(sset).filter(n=>n.toLowerCase().includes(q)).sort();
+  const names=Object.keys(sset).filter(n=>n.toLowerCase().includes(q)||siteAbbr(n).some(a=>a.toLowerCase().includes(q))).sort();
   let html='';
   if(siteFilter==='HA'){
     const bySec={};
@@ -321,7 +344,7 @@ function drawSites(){
   }
   $('list').innerHTML=html||'<div class=dim style=margin-top:10px>No sites match.</div>';
 }
-function siteRow(n,c){return `<div class="card click" onclick="go('site',${JSON.stringify(n).replace(/"/g,'&quot;')})"><div class="row"><h3>${esc(n)}</h3><span class="dim">${c} items</span></div>${DB.sectors[n]?`<div class="dim">🗺️ ${esc(SECTOR(DB.sectors[n]))}</div>`:''}</div>`}
+function siteRow(n,c){const ab=siteAbbr(n)[0];return `<div class="card click" onclick="go('site',${JSON.stringify(n).replace(/"/g,'&quot;')})"><div class="row"><h3>${esc(n)}${ab?` <span class="tag acc">${esc(ab)}</span>`:''}</h3><span class="dim">${c} items</span></div>${DB.sectors[n]?`<div class="dim">🗺️ ${esc(SECTOR(DB.sectors[n]))}</div>`:''}</div>`}
 function site(name){
   const items=DB.items.filter(i=>(i.site||'(no site)')===name);
   const act=items.filter(i=>i.status!=='Retired'), ret=items.filter(i=>i.status==='Retired');
@@ -531,14 +554,28 @@ function card(id){
 }
 
 // ---------- Parts ----------
+function partRowW(p){  // worker view: name + P/N only, no counts, no CM records
+  return `<div class="card"><div class="row"><h3>${esc(p.name)}</h3>${p.pn?`<span class="tag acc">${esc(p.pn)}</span>`:''}</div></div>`;
+}
 function parts(){
+  if(ROLE==='worker'){
+    V().innerHTML=`<input type=search id=q placeholder="Part name or P/N…" oninput="partsSearch()">
+     <div class="hint">${DB.parts.length} parts · name &amp; part number.</div>
+     <div id=list>${DB.parts.map(partRowW).join('')}</div>`;
+    return;
+  }
   V().innerHTML=`<input type=search id=q placeholder="Part name or P/N…" oninput="partsSearch()">
    <div class="hint">Catalog built from ${DB.svc.filter(s=>s.parts&&s.parts.length).length} CM records that used parts — counts = times used in the field.</div>
    <div id=list>${DB.parts.slice(0,40).map(partRow).join('')}</div>`;
 }
 function partsSearch(){
   const q=$('q').value.toLowerCase();
-  $('list').innerHTML=DB.parts.filter(p=>(p.name+' '+p.pn).toLowerCase().includes(q)).slice(0,50).map(partRow).join('')||'<div class=dim style=margin-top:10px>No part matches.</div>';
+  const hit=DB.parts.filter(p=>(p.name+' '+(p.pn||'')).toLowerCase().includes(q));
+  if(ROLE==='worker'){
+    $('list').innerHTML=hit.map(partRowW).join('')||'<div class=dim style=margin-top:10px>No part matches.</div>';
+    return;
+  }
+  $('list').innerHTML=hit.slice(0,50).map(partRow).join('')||'<div class=dim style=margin-top:10px>No part matches.</div>';
 }
 function part(key){
   const p=DB.parts.find(x=>(x.pn||x.name)===key); if(!p){go('parts');return}
