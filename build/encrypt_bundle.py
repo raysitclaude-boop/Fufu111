@@ -35,7 +35,7 @@ SRC = "data/bundle.json"
 # free-text 'Actions Taken' is stripped out, because it can contain credentials
 # or WiFi keys R typed in, which the shared-password boundary keeps out of the
 # worker's offline file.
-WORKER_KEYS = ["asof", "items", "sectors", "pm", "svc"]
+WORKER_KEYS = ["asof", "items", "sectors", "pm", "svc", "parts"]
 
 def worker_svc(svc):
     """Structured CM fields only for the worker bundle: date, machine, serial,
@@ -45,6 +45,14 @@ def worker_svc(svc):
     out = []
     for s in svc or []:
         out.append({k: s.get(k) for k in keep if k in s})
+    return out
+
+def worker_parts(parts):
+    """Plain parts reference for the worker: name + part number only. Drops the
+    usage frequency ('n'), the Problem-L2 breakdown ('l2') and machines ('mach')
+    — the worker parts tab is just a lookup list, not analytics."""
+    out = [{"name": p.get("name", ""), "pn": p.get("pn", "")} for p in (parts or [])]
+    out.sort(key=lambda p: p["name"].lower())
     return out
 
 def encrypt(dst, pw, obj):
@@ -83,7 +91,9 @@ def main():
     if wpw:
         wb = {k: bundle.get(k) for k in WORKER_KEYS if k in bundle}
         if "svc" in wb:
-            wb["svc"] = worker_svc(wb["svc"])   # drop free-text before it leaves the build
+            wb["svc"] = worker_svc(wb["svc"])       # drop free-text before it leaves the build
+        if "parts" in wb:
+            wb["parts"] = worker_parts(wb["parts"]) # name + P/N only, no frequency
         wb["role"] = "worker"
         if wkey:
             wb["wkey"] = wkey
