@@ -688,14 +688,37 @@ def parse_part(raw):
         name = f"{rest} {code}{paren}" if rest else f"Board {code}"
     return re.sub(r"\s{2,}", " ", name).strip(" -–:"), pn
 
+# --- Part-number canonicalisation (rules confirmed with R, 2026-09-11) --------
+# 'FW07G' is a catalogue prefix, not part of the number: the same part is written
+# both with and without it, which split the catalogue and made search miss one
+# form. Strip it for keying, but keep the fullest spelling for display.
+PN_PREFIX_RE = re.compile(r"^FW07G[-_\s]*", re.I)
+# Confirmed same-part aliases. Keep this EXPLICIT — a blanket "trailing B == 8"
+# rule would merge genuinely different parts.
+PN_ALIASES = {
+    "857Y120049B": "857Y1200498",     # SPR65A — B/8 transcription variant, one part
+}
+
+def canon_pn(pn):
+    """Key a part number: drop the FW07G prefix, upper-case, then apply aliases."""
+    if not pn:
+        return ""
+    p = PN_PREFIX_RE.sub("", str(pn).strip()).upper()
+    return PN_ALIASES.get(p, p)
+
 def build_parts(svc):
     print("Deriving parts catalog from CM records ...")
     cat = {}
+    merged = {}          # canonical key -> set of raw spellings seen
     for s in svc:
         for raw in s.get("parts", []):
             name, pn = parse_part(raw)
             if not name and pn:
                 name = pn
+            if pn:
+                cpn = canon_pn(pn)
+                merged.setdefault(cpn, set()).add(pn)
+                pn = cpn
             key = pn or name.lower()
             e = cat.setdefault(key, {"name": name[:60], "pn": pn, "n": 0, "l2": {}, "mach": []})
             e["n"] += 1
@@ -703,7 +726,12 @@ def build_parts(svc):
             for mch in s.get("mach", []):
                 if mch not in e["mach"]: e["mach"].append(mch)
     parts = sorted(cat.values(), key=lambda x: -x["n"])
+    folded = {k: sorted(v) for k, v in merged.items() if len(v) > 1}
     print(f"  {len(parts)} distinct parts")
+    if folded:
+        print(f"  {len(folded)} part number(s) folded from spelling variants:")
+        for k, v in sorted(folded.items()):
+            print(f"    {k}  <-  {', '.join(v)}")
     return parts
 
 def build_cards():
@@ -719,27 +747,73 @@ def build_cards():
         print(f"  card {cid}: {len(content)} chars")
     return cards
 
+# Blocks we must never descend into: a linked child page/database is a different
+# document, and its tables are not this machine's error codes.
+_ERR_SKIP = {"child_page", "child_database", "table", "table_row"}
+# "4.1.2 Failure error message list (Generator control)" — a manual section label
+SECTION_LABEL_RE = re.compile(r"^\d+(?:\.\d+)+\s+\S")
+
 def build_errors():
+    """Walk each error-code page and collect EVERY table, at any nesting depth.
+
+    The previous version only looked at page-level blocks plus ONE level inside
+    toggle/column_list/column. That silently produced ZERO tables for Go Plus
+    once the page was reorganised into toggle-able headings
+    (`# GO PLUS {toggle}` > `## Error codes {toggle}` > table), because a
+    heading branch was only used to update the group title and was never
+    descended into. It also never worked for column layouts, since a
+    column_list's children are `column` blocks, not tables. Result: the app
+    rendered the machine chip but had no rows to search, so a real code like
+    Go Plus 'F5F' returned "no matches". Recurse properly instead.
+    """
     print("Pulling error-code tables ...")
     out = []
     for eid, name, note, page_id in ERROR_PAGES:
-        groups, current_title = [], name
-        for b in block_children(page_id):
-            t = b.get("type")
-            if t in ("heading_1", "heading_2", "heading_3"):
-                current_title = rich(b[t].get("rich_text")) or current_title
-            elif t == "table":
-                rows = table_rows(b)
-                if len(rows) >= 2:
-                    groups.append({"title": current_title, "cols": rows[0], "rows": rows[1:]})
-            elif t in ("toggle", "column_list", "column") and b.get("has_children"):
-                for c in block_children(b["id"]):
-                    if c.get("type") == "table":
-                        rows = table_rows(c)
-                        if len(rows) >= 2:
-                            groups.append({"title": current_title, "cols": rows[0], "rows": rows[1:]})
+        groups = []
+        state = {"title": name, "lead": ""}
+
+        def walk(bid, depth=0):
+            if depth > 8:                        # cycle / runaway guard
+                return
+            for b in block_children(bid):
+                t = b.get("type")
+                if t in ("heading_1", "heading_2", "heading_3"):
+                    txt = rich(b[t].get("rich_text")).strip()
+                    if txt:
+                        state["title"] = txt
+                        state["lead"] = ""
+                    # A toggle-able heading keeps its content as CHILDREN.
+                    if b.get("has_children"):
+                        walk(b["id"], depth + 1)
+                elif t == "paragraph":
+                    # The manual's section labels ("4.1.2 Failure error message
+                    # list (Generator control)") are plain paragraphs, not
+                    # headings. Without them all three Go Plus code tables land
+                    # under the same heading title and are indistinguishable in
+                    # the app. Remember a short numbered label as the lead.
+                    txt = rich(b["paragraph"].get("rich_text")).strip()
+                    if SECTION_LABEL_RE.match(txt) and len(txt) <= 120:
+                        state["lead"] = txt
+                elif t == "table":
+                    rows = table_rows(b)
+                    if len(rows) >= 2:
+                        groups.append({"title": state["lead"] or state["title"],
+                                       "cols": rows[0], "rows": rows[1:]})
+                        state["lead"] = ""       # a label belongs to one table
+                elif t not in _ERR_SKIP and b.get("has_children"):
+                    walk(b["id"], depth + 1)
+
+        walk(page_id)
+        n = sum(len(g["rows"]) for g in groups)
         out.append({"id": eid, "name": name, "note": note, "groups": groups})
-        print(f"  {eid}: {sum(len(g['rows']) for g in groups)} codes in {len(groups)} groups")
+        print(f"  {eid}: {n} codes in {len(groups)} groups")
+        # Guard: ERROR_PAGES is a hard-coded list of pages that definitely hold
+        # tables. Zero means the parser lost them again — fail loudly rather
+        # than shipping a bundle whose error index is silently empty.
+        if not groups:
+            sys.exit(f"FATAL: error page '{eid}' ({page_id}) yielded no tables. "
+                     f"The page structure changed — fix build_errors() before "
+                     f"publishing a bundle with an empty error index.")
     return out
 
 def build_procedures():
