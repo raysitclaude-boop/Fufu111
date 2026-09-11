@@ -131,7 +131,7 @@ details.proc .body{padding:6px 14px 14px}
 </nav>
 <script>
 let DB=null, ROLE='admin', route={p:'sites'}, PREV=null, siteFilter='All';
-let fixTab='symptom', errMachine='goplus';
+let fixTab='symptom', errMachine='goplus', errQuery='';
 const CARD_L2={artifacts:['Artifacts'],'charging-pins':['Charging Pins'],bcr:['Barcode Reader'],cable:['Cable/Connector'],handswitch:['Hand Switch','Wireless Hand Switch'],'charging-plug':['Charging Plug'],'collimator-handle':['Collimator Handle'],bumper:['Bumper'],wifi:['Wifi'],'wl-pacs':['WL and PACS'],'uu-settings':['UU Settings','SU Settings']};
 const $=id=>document.getElementById(id), V=()=>$('view');
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -216,7 +216,7 @@ async function unlock(){
   boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-const APP_VER='v5.8';
+const APP_VER='v5.9';
 // --- HA cluster names -------------------------------------------------------
 // The official HA list has 6 clusters; Hong Kong East and Hong Kong West were
 // merged into Hong Kong Island. Old bundles cached on a phone may still carry
@@ -424,6 +424,7 @@ function assetnet(sn){
    <div class="fld"><label>Default gateway</label><input type="text" id="n_gw" value="${esc(i.gw||'')}" placeholder="192.168.1.1" inputmode="decimal" autocorrect="off"></div>
    <div class="fld"><label>Console login (AC)</label><input type="text" id="n_login" value="${esc(i.login||'')}" placeholder="account" autocapitalize="off" autocorrect="off"></div>
    <div class="fld"><label>Console password</label><input type="text" id="n_pw" value="${esc(i.pw||'')}" placeholder="password" autocapitalize="off" autocorrect="off"></div>
+   <div class="fld"><label>Remark (optional — saved to the asset, no serial change)</label><textarea id="n_rmk" placeholder="e.g. console behind the door; IP fixed by hospital IT">${esc(i.remark||'')}</textarea></div>
    <button class="btn" onclick="submitNet(${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">Save (queues if offline)</button>`;
 }
 function submitNet(sn){
@@ -432,10 +433,17 @@ function submitNet(sn){
   const mc=$('n_mc').value.trim(), apl=$('n_apl').value.trim(), ip=$('n_ip').value.trim(), sub=$('n_sub').value.trim(), gw=$('n_gw').value.trim(), login=$('n_login').value.trim(), pw=$('n_pw').value.trim();
   for(const [v,l] of [[ip,'IP address'],[sub,'Subnet mask'],[gw,'Default gateway']])
     if(!ipOK(v)){alert(l+' must be a valid IPv4 address like 192.168.1.10, or left blank.');return}
-  if(!mc&&!apl&&!ip&&!sub&&!gw&&!login&&!pw){alert('Enter at least one value.');return}
-  enqueue('PATCH','/asset-net/'+i.pid,{set:{mcver:mc,apl,ip,subnet:sub,gw,login,pw}},`Console ${i.site} ${sn}: ${ip||mc||apl}`);
+  const rmk=$('n_rmk').value.trim();
+  // A remark ALONE is a legitimate save — jotting a note about an asset without
+  // touching its serial or network values. The old guard rejected that outright
+  // ("Enter at least one value"), and if it did get through, the Worker replied
+  // "Nothing to record" and the job parked as failed.
+  if(!mc&&!apl&&!ip&&!sub&&!gw&&!login&&!pw&&rmk===(i.remark||'')){alert('Nothing changed — enter a value or a remark.');return}
+  const set={mcver:mc,apl,ip,subnet:sub,gw,login,pw};
+  if(rmk!==(i.remark||''))set.remark=rmk;
+  enqueue('PATCH','/asset-net/'+i.pid,{set},`Console ${i.site} ${sn}: ${ip||mc||apl||'remark'}`);
   // optimistic local update so values show on the item screen right away
-  i.mcver=mc; i.apl=apl; i.ip=ip; i.subnet=sub; i.gw=gw; i.login=login; i.pw=pw; i.netby=myName(); i.netd=new Date().toISOString().slice(0,10);
+  i.mcver=mc; i.apl=apl; i.ip=ip; i.subnet=sub; i.gw=gw; i.login=login; i.pw=pw; i.remark=rmk; i.netby=myName(); i.netd=new Date().toISOString().slice(0,10);
   go('item',sn);
 }
 // --- Update item info (model / status / remark) — direct edit, any item -------
@@ -481,39 +489,77 @@ function fix(){
 }
 // --- 1) By Symptom (Solution Cards + past cases) ---
 function fixSymptom(){
-  $('fixbody').innerHTML=`<input type=search id=q placeholder="Symptom, error code, machine… e.g. 'A9', 'artifact'" oninput="fixSearch()">
+  $('fixbody').innerHTML=`<input type=search id=q placeholder="Symptom, error code, machine… e.g. 'F5F', 'A9', 'artifact'" oninput="fixSearch()">
    <div id=list>${DB.cards.map(cardRow).join('')}</div>`;
 }
 function cardRow(c){return `<div class="card click" onclick="go('card','${c.id}')"><div class="row"><h3>${esc(c.title)}</h3><span class="tag">${esc(c.cat)}</span></div><div class="dim">${esc((c.machines||[]).join(', '))}</div></div>`}
+// Search the manual error tables across EVERY machine. The symptom box used to
+// ignore DB.errors entirely, so a real manual code (e.g. Go Plus 'F5F') typed
+// into the box whose placeholder invites "error code" returned nothing at all.
+function errHits(q,limit){
+  const out=[];
+  (DB.errors||[]).forEach(m=>{
+    (m.groups||[]).forEach(g=>{
+      (g.rows||[]).forEach(r=>{
+        if(r.join(' ').toLowerCase().includes(q))out.push({m,g,r});
+      });
+    });
+  });
+  return limit?out.slice(0,limit):out;
+}
+function errHitRow(h){
+  return `<div class="card"><div class="row"><h3 style="color:var(--acc)">${esc(h.r[0]||'')}</h3>
+   <span class="tag">${esc(h.m.name.split(' (')[0].replace(/ — .*$/,''))}</span></div>
+   <div class="dim">${esc(h.g.title)}</div>
+   ${h.r.slice(1).filter(Boolean).map(c=>`<div>${esc(c)}</div>`).join('')}</div>`;
+}
 function fixSearch(){
-  const q=$('q').value.toLowerCase();
+  const q=$('q').value.toLowerCase().trim();
   let out=DB.cards.filter(c=>(c.title+' '+c.keywords+' '+c.content).toLowerCase().includes(q)).map(cardRow).join('');
+  if(q.length>=2){
+    const eh=errHits(q,25);
+    if(eh.length)out+=`<div class="sys">📖 Manual error codes (${eh.length}${eh.length===25?'+':''})</div>`+eh.map(errHitRow).join('');
+  }
   if(q.length>=3){
     const rec=DB.svc.filter(s=>((s.sym||[]).join(' ')+' '+(s.err||[]).join(' ')+' '+s.act+' '+s.l2).toLowerCase().includes(q)).slice(0,15);
     if(rec.length)out+=`<div class="sys">Matching past cases (${rec.length}${rec.length===15?'+':''})</div>`+rec.map(svcLine).join('');
   }
-  $('list').innerHTML=out||'<div class=dim style=margin-top:10px>No card matches — try past-case search with 3+ characters, or the SOP hub in Notion.</div>';
+  $('list').innerHTML=out||'<div class=dim style=margin-top:10px>No match in solution cards, manual error codes, or past cases. Try 2+ characters, or the SOP hub in Notion.</div>';
 }
 // --- 2) Error Code Index ---
 function fixErrors(){
   const machs=DB.errors||[];
   $('fixbody').innerHTML=`
    <div class="chips">${machs.map(m=>`<button class="chip${errMachine===m.id?' on':''}" onclick="errMachine='${m.id}';fixErrors()">${esc(m.name.split(' (')[0])}</button>`).join('')}</div>
-   <input type=search id=eq placeholder="Search code / name / remedy… e.g. '11228', 'battery', 'F04'" oninput="drawErrors()">
+   <input type=search id=eq value="${esc(errQuery)}" placeholder="Search code / name / remedy… e.g. '11228', 'battery', 'F5F'" oninput="errQuery=this.value;drawErrors()">
    <div id=elist></div>`;
   drawErrors();
 }
 function drawErrors(){
   const m=(DB.errors||[]).find(x=>x.id===errMachine); if(!m){$('elist').innerHTML='';return}
   const q=($('eq')?.value||'').toLowerCase().trim();
-  let html=`<div class="hint" style="margin:8px 0">${esc(m.name)} — ${esc(m.note)}</div>`, hits=0;
+  const total=(m.groups||[]).reduce((n,g)=>n+(g.rows||[]).length,0);
+  // A machine chip with zero rows means the nightly build failed to pull that
+  // page's tables — say so instead of pretending the code doesn't exist.
+  if(!total){
+    $('elist').innerHTML=`<div class="card warn"><b>⚠️ No error table loaded for ${esc(m.name.split(' (')[0])}.</b>
+     <div class="dim">The offline bundle has no rows for this machine, so nothing can match. This is a data-build problem, not a missing code — tell R.</div></div>`;
+    return;
+  }
+  let html=`<div class="hint" style="margin:8px 0">${esc(m.name)} — ${esc(m.note)} · ${total} codes</div>`, hits=0;
   m.groups.forEach(g=>{
     const rows=g.rows.filter(r=>!q||r.join(' ').toLowerCase().includes(q));
     if(!rows.length)return; hits+=rows.length;
     html+=`<div class="sys">${esc(g.title)}</div><div class="caltbl"><table><tr>${g.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`+
       rows.map(r=>'<tr>'+r.map((c,ci)=>ci===0?`<td><b style="color:var(--acc)">${esc(c)}</b></td>`:`<td>${esc(c)}</td>`).join('')+'</tr>').join('')+`</table></div>`;
   });
-  $('elist').innerHTML=hits?html:`<div class=dim style=margin-top:10px>No error code matches “${esc(q)}”. Try the code only (e.g. 11228) or a keyword (battery, fuse).</div>`;
+  if(hits){$('elist').innerHTML=html;return}
+  // Not in the selected machine — look everywhere else before giving up, so a
+  // wrong chip never reads as "this code does not exist".
+  const other=errHits(q,25).filter(h=>h.m.id!==errMachine);
+  $('elist').innerHTML=`<div class=dim style=margin-top:10px>No match for “${esc(q)}” in ${esc(m.name.split(' (')[0])}.</div>`+
+    (other.length?`<div class="sys">Found on other machines (${other.length})</div>`+other.map(errHitRow).join('')
+                 :`<div class=dim style=margin-top:6px>Not found on any machine. Try the code only (e.g. 11228) or a keyword (battery, fuse).</div>`);
 }
 // --- 3) Common Procedures ---
 function fixProc(){
@@ -807,8 +853,20 @@ function enqueue(method,path,payload,label){
   setOutbox(box); flushOutbox();
 }
 let flushing=false;
-async function flushOutbox(){
-  if(flushing||!workerReady()||!navigator.onLine)return; flushing=true;
+// Statuses the Worker can return that are NOT the job's fault and must stay
+// retryable. 401/403 is almost always a rotated WRITE_KEY: parking those as
+// 'failed' silently strands every queued write on every phone until someone
+// taps Retry by hand. 408/425/429 are transport/back-pressure.
+const RETRYABLE=new Set([401,403,408,425,429]);
+// The Worker returns these as 4xx errors, but they mean "your patch would change
+// nothing" — a no-op, not a failure. Confirm the job instead of stranding it.
+const NOOP_RE=/nothing to (update|record)/i;
+const jobAgeMs=j=>Date.now()-new Date(j.ts).getTime();
+async function flushOutbox(force){
+  // navigator.onLine only says "an interface is attached" — on hospital Wi-Fi
+  // behind a captive portal it reads true with no route out, and it can read
+  // false on some Android builds while data works. Let a manual tap override.
+  if(flushing||!workerReady()||(!force&&!navigator.onLine))return; flushing=true;
   try{
     let box=getOutbox();
     for(const j of box.filter(x=>x.st!=='confirmed')){
@@ -816,22 +874,40 @@ async function flushOutbox(){
         const r=await fetch(WORKER_URL+j.path,{method:j.method,
           headers:{'Content-Type':'application/json','X-Write-Key':writeKey()},
           body:JSON.stringify({...j.payload,uuid:j.uuid,by:myName()})});
-        const d=await r.json();
+        const d=await r.json().catch(()=>({}));
         if(d.ok){j.st='confirmed';j.err='';j.id=d.id;}
-        else{j.st=r.status>=500?'queued':'failed';j.err=d.error||('HTTP '+r.status);}
-      }catch(e){ j.st='queued'; j.err='offline / network'; break; }
-      setOutbox(box);
+        // "Nothing to update" / "Nothing to record" is the Worker saying the
+        // patch would change nothing. That is a NO-OP, not a failure — but it
+        // came back as a 4xx, so the job parked as 'failed' and sat in the
+        // queue for ever showing a scary error. Nothing to do means done.
+        else if(NOOP_RE.test(d.error||'')){j.st='confirmed';j.err='';j.noop=true;}
+        else{
+          j.st=(r.status>=500||RETRYABLE.has(r.status))?'queued':'failed';
+          j.err=d.error||('HTTP '+r.status);
+          j.code=r.status;
+        }
+      }catch(e){ j.st='queued'; j.err='offline / network'; setOutbox(box); break; }
+      j.tries=(j.tries||0)+1;
+      setOutbox(box);            // persist after every job, including the break above
     }
     // drop confirmed entries older than 3 days
     box=getOutbox().filter(x=>x.st!=='confirmed'||(Date.now()-new Date(x.ts))<3*86400e3);
     setOutbox(box);
     if(getOutbox().every(x=>x.st==='confirmed')) refreshVisits(true);
-  } finally{ flushing=false; if(route.p==='pm')render(); }
+  } finally{ flushing=false; if(['pm','outbox'].includes(route.p))render(); }
 }
 function updateSyncBadge(){
-  const n=getOutbox().filter(x=>x.st!=='confirmed').length;
-  $('syncb').textContent=n?`⏳ ${n} pending`:'';
+  const pend=getOutbox().filter(x=>x.st!=='confirmed');
+  const stale=pend.some(j=>jobAgeMs(j)>86400e3);   // anything older than 24h
+  const b=$('syncb'); if(!b)return;
+  b.textContent=pend.length?`${stale?'⚠️':'⏳'} ${pend.length} pending`:'';
+  b.style.color=stale?'var(--warn,#e0533d)':'';
+  b.title=stale?'Some entries have been stuck for over a day — open to sync.':'';
 }
+// Nothing drains the queue while the app is closed (see sw.js), so retry on a
+// timer for as long as it IS open — this is what actually rescues a phone that
+// regained signal in the user's pocket with the app still in the foreground.
+setInterval(()=>{if(getOutbox().some(x=>x.st!=='confirmed'))flushOutbox();},60000);
 // ---- live visits cache ----
 const getVisits=()=>JSON.parse(localStorage.getItem(VISITS_LS)||'null');
 async function refreshVisits(silent){
@@ -984,15 +1060,22 @@ function submitMismatch(expSn,expTitle){
 function outbox(){
   const box=getOutbox();
   V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>⏳ Sync queue</h2>
-   <button class="btn sec" onclick="flushOutbox()">↻ Try to sync now</button>
+   <button class="btn sec" onclick="flushOutbox(true)">↻ Try to sync now</button>
+   ${(()=>{const st=box.filter(j=>j.st!=='confirmed'&&jobAgeMs(j)>86400e3).length;
+     return st?`<div class="card warn"><b>⚠️ ${st} entr${st===1?'y has':'ies have'} been waiting over 24 hours.</b>
+      <div class="dim">Nothing syncs while the app is closed. Stay on Wi-Fi, tap “Try to sync now”, and tell R if anything still says <b>failed</b>.</div></div>`:''})()}
    ${box.slice().reverse().map(j=>`<div class="card${j.st!=='confirmed'?' pend':''}">
      <div class="row"><h3>${esc(j.label)}</h3><span class="tag ${j.st==='confirmed'?'ok':(j.st==='failed'?'bad':'warn')}">${j.st}</span></div>
-     <div class="dim">${esc(j.ts.slice(0,16).replace('T',' '))}</div>
-     ${j.err?`<div class="dim" style="color:var(--bad)">${esc(j.err)}</div>`:''}
+     <div class="dim">${esc(j.ts.slice(0,16).replace('T',' '))}${j.st!=='confirmed'?' · '+ageLabel(j):''}${j.tries?` · ${j.tries} tr${j.tries===1?'y':'ies'}`:''}</div>
+     ${j.err?`<div class="dim" style="color:var(--bad)">${esc(j.err)}${j.code===401||j.code===403?' — write key rejected; R must re-check the Worker key.':''}</div>`:''}
      ${j.st==='failed'?`<button class="btn sm sec" onclick="retryJob('${j.uuid}')">Retry</button><button class="btn sm sec" onclick="dropJob('${j.uuid}')">Delete</button>`:''}
    </div>`).join('')||'<div class=dim style=margin-top:10px>Queue is empty — everything synced.</div>'}`;
 }
-function retryJob(u){const b=getOutbox();const j=b.find(x=>x.uuid===u);if(j){j.st='queued';j.err='';setOutbox(b);flushOutbox();}render();}
+function ageLabel(j){const h=jobAgeMs(j)/3600e3;
+  if(h<1)return Math.max(1,Math.round(h*60))+'m old';
+  if(h<48)return Math.round(h)+'h old';
+  return Math.round(h/24)+'d old';}
+function retryJob(u){const b=getOutbox();const j=b.find(x=>x.uuid===u);if(j){j.st='queued';j.err='';setOutbox(b);flushOutbox(true);}render();}
 function dropJob(u){setOutbox(getOutbox().filter(x=>x.uuid!==u));render();}
 
 // ==================================================================
