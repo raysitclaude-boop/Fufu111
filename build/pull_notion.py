@@ -18,7 +18,9 @@ Design rules (KB_PWA_Architecture_Spec.md §2.3, binding):
     loud warning on soft markers (so a stray word can't brick the nightly build).
 
 Bundle schema (must match index.html):
-  asof, items[], sectors{}, svc[], pm[], parts[], cards[], errors[], procedures{}
+  asof, items[], sectors{}, svc[], pm[], parts[], cards[], errors[], procedures{},
+  kb[] (SOP guides, full text), mref[] (Service Manual KB Hub index, no body text),
+  mcodes[] (manual error-code cards, full text), kbstatus{} (kb/manuals load status)
 
 Stdlib only (urllib) — `cryptography` is only needed by encrypt_bundle.py.
 """
@@ -60,6 +62,187 @@ PROCEDURE_DOCS = [
     # (tag shown in UI, page id)
     ("QA", "2f3a9088-5bbb-808a-bdb0-f2ef113ae661"),   # Calibration / QA values page
 ]
+
+# ----------------------------------------------------------------------------
+# V5.10 — Fix > By Symptom knowledge sources (owner decisions 2026-09-27, binding):
+#   * SOP guide pages (R's own write-ups)      -> FULL TEXT, admin bundle key "kb"
+#   * Service Manual KB Hub (official manuals) -> INDEX ONLY (no body text), key "mref"
+#   * ...except per-code error cards            -> FULL TEXT, key "mcodes"
+# Neither key is added to WORKER_KEYS (encrypt_bundle.py) — admin-only, untouched here.
+# ----------------------------------------------------------------------------
+
+# SOP guide pages (R's own write-ups) — FULL TEXT, admin bundle only.
+# ALLOWLIST: only these page ids are read. Credential pages are deliberately absent.
+KB_PAGES = [
+    # (id_slug, title, category, [machine families], "keywords", page_id)
+    # Drafted 2026-09-27 from the SOP hub walk. EXCLUDED on purpose: credential pages
+    # (Nano POCX, 隱藏password, WiFi Aruba/Adapter, UU Settings, Router setting), Solution
+    # Cards (already in CARDS), the calibration values page (already in PROCEDURE_DOCS),
+    # category hubs, image-only/empty pages, and anything copied from the manuals.
+    # build_kb() also drops any page whose text matches KB_CREDENTIAL_RE at build time.
+    # --- Playbook ---
+    ('hw-playbook', 'Hardware Troubleshooting Playbook (CM)', 'Playbook', ['All'], 'hardware troubleshooting search decide execute verify prevent playbook', '47ad709e-102c-40e4-a74a-9eee158066d0'),
+    ('network-playbook', 'Network Troubleshooting Playbook (WiFi/IP/PACS/WL)', 'Playbook', ['All'], 'network wifi ip pacs worklist troubleshooting playbook', 'e0095bd8-d8d8-4dcc-a441-acd18b1111c9'),
+    ('software-playbook', 'Software Troubleshooting Playbook (SU/UU/MC/PC)', 'Playbook', ['Console/PC'], 'software su uu mc pc troubleshooting playbook install settings logs', '4cae59e3-7c69-4de6-8b18-c98159022b48'),
+    # --- Hardware ---
+    ('ct-hardware', 'CT', 'Hardware', ['Other'], 'ct hardware quick reference', '37ca9088-5bbb-8071-b567-d30166791838'),
+    ('go-plus-system', 'GO PLUS', 'Hardware', ['Go Plus'], 'go plus system quick reference hardware index', '306a9088-5bbb-804e-b546-d9f4ac0ea631'),
+    ('go-plus-bumper-error', 'Bumper Error', 'Hardware', ['Go Plus'], 'bumper error a9 go plus collision sensor code', '33ea9088-5bbb-80ae-9fe3-d81286a1163a'),
+    ('go-plus-tube-replace', 'X-ray Tube (Replacement) [GO PLUS]', 'Hardware', ['Go Plus'], 'x-ray tube replacement go plus procedure', '334a9088-5bbb-807a-bbd6-f2ecaadceb19'),
+    ('go-plus-modes', 'Go Plus - Modes', 'Hardware', ['Go Plus'], 'go plus operation modes settings reference', '2fda9088-5bbb-8053-bce1-d49ca426d90b'),
+    ('go-plus-tube-head-adjust', 'Tube Head Adjust', 'Hardware', ['Go Plus'], 'tube head adjust alignment go plus procedure', '305a9088-5bbb-805d-8156-e4ae030e6c9a'),
+    ('go-plus-collimator-replace', 'Collimator replacement [GO PLUS]', 'Hardware', ['Go Plus'], 'collimator replacement go plus procedure', '302a9088-5bbb-8041-8f42-d7449e279323'),
+    ('go-plus-light-field-test', 'Light Field Acceptance Test', 'Hardware', ['Go Plus'], 'light field acceptance test collimator alignment', '302a9088-5bbb-8024-a381-e8ecb3897b41'),
+    ('go-plus-error-mi11021', 'Error Meaning (MI11021)', 'Hardware', ['Go Plus'], 'error mi11021 meaning code go plus', '2fba9088-5bbb-8055-abf0-e235be336bf4'),
+    ('go-plus-tube-filament-check', 'Tube filament check', 'Hardware', ['Go Plus'], 'tube filament check test go plus procedure', '312a9088-5bbb-8081-9205-d4d1c21e3491'),
+    ('go-plus-handswitch-bluetooth', 'Wireless Hand Switch Bluetooth', 'Hardware', ['Go Plus'], 'wireless hand switch bluetooth pairing go plus', '31fa9088-5bbb-80b2-8895-e355fda7e08d'),
+    ('mammo-system', 'Mammo', 'Hardware', ['Mammo'], 'mammo system quick reference hardware index', '36ca9088-5bbb-80bf-a862-e38c1ebf83a4'),
+    ('nano-system', 'NANO', 'Hardware', ['Nano'], 'nano system quick reference hardware index', '306a9088-5bbb-80cf-9835-e1785b861cb6'),
+    ('nano-mp-board-iu-box', 'MP Board(IU BOX)', 'Hardware', ['Nano'], 'mp board iu box nano hardware replacement', '303a9088-5bbb-80e2-8f2f-ca3a199a72c0'),
+    ('nano-inv-board', 'INV Board', 'Hardware', ['Nano'], 'inv board nano hardware replacement', '306a9088-5bbb-805c-ac98-d020499eeaa7'),
+    ('nano-monitor-replace', 'Nano Monitor Replacement', 'Hardware', ['Nano'], 'monitor replacement nano display procedure case note', '306a9088-5bbb-8029-b800-f3aa2696b40d'),
+    ('nano-arm-lock-cover', 'Arm Lock/Arm cover plate', 'Hardware', ['Nano'], 'arm lock cover plate nano hardware replacement', '310a9088-5bbb-8062-9133-e6d7813e4b88'),
+    ('nano-battery', 'Battery (NANO)', 'Hardware', ['Nano'], 'battery nano replacement check procedure', '306a9088-5bbb-8031-870e-d602733273fc'),
+    ('fdr-smart-e27-ramp-error', 'AEC Ramp error (E27 RAMP ERROR)', 'Hardware', ['FDR Smart'], 'aec ramp error e27 fdr smart code', '313a9088-5bbb-805f-81a1-ddc57644829f'),
+    ('fdr-smart-f38-error', 'F38 Error', 'Hardware', ['FDR Smart'], 'f38 error code fdr smart', '375a9088-5bbb-803a-9317-ef6f79a69b49'),
+    ('ai-box', 'AI BOX', 'Hardware', ['Other'], 'ai box xair hardware unit reference', '334a9088-5bbb-8047-953f-cac245ade7c8'),
+    ('devo-rmv-board', 'RMV Board', 'Hardware', ['D-evo'], 'rmv board d-evo hardware replacement', '313a9088-5bbb-800a-831e-c8705b5d77f8'),
+    ('devo-power-board-rec65a', 'Power Board - REC65A', 'Hardware', ['D-evo'], 'power board rec65a d-evo replacement', '334a9088-5bbb-8004-92f3-fad9b474cced'),
+    ('irad-firmware-update', 'iRad firmware update', 'Hardware', ['SE Lite'], 'irad firmware update panel procedure', '365a9088-5bbb-804b-9a3a-e0152ac9bd31'),
+    # --- Detector ---
+    ('detector-install-register-fpd', 'Install / Register New Detector (FPD) — Field SOP', 'Detector', ['All'], 'install register detector fpd field sop panel setup', '2bd8c107-c447-4458-b417-a6f2937c0da3'),
+    ('irad-panel', 'iRad Panel', 'Detector', ['SE Lite'], 'irad panel detector reference iray quick index', '334a9088-5bbb-8010-bd2b-eba0bdc80429'),
+    # --- Accessory ---
+    ('barcode-reader-program', 'Barcode Reader Program', 'Accessory', ['All'], 'barcode reader bcr program setup accessory', '334a9088-5bbb-80f5-92fb-d2e74a866f8a'),
+    # --- Network ---
+    ('wifi-repair-button', 'Wifi - Repair button', 'Network', ['All'], 'wifi repair button reconnect network fix', '2fda9088-5bbb-80f6-9e4f-e5b43dfb1208'),
+    ('auto-change-ip-startup', 'Auto change IP per start-up', 'Network', ['All'], 'auto change ip startup network config', '309a9088-5bbb-8020-8ff1-f96b5a704122'),
+    ('wl-settings-check-clinic', 'WL settings check (Clinic)', 'Network', ['All'], 'worklist settings check clinic pacs query', '306a9088-5bbb-80cc-8db3-cc256c97576c'),
+    ('wl-cannot-get-dicom-log', 'Cannot get WL procedures/Get DICOM Log', 'Network', ['All'], 'worklist cannot get dicom log procedure debug', '31ea9088-5bbb-80cb-85d2-f821843cc7e9'),
+    ('ip-conflict-reasons', 'Ip conflict reasons', 'Network', ['All'], 'ip conflict reasons network troubleshooting', '325a9088-5bbb-80ab-8137-fe8672a8300b'),
+    ('network-cli-troubleshoot', 'Network Trouble-shoot', 'Network', ['All'], 'ping arp tracert route cli network troubleshoot', '334a9088-5bbb-8015-8643-e00b4af75080'),
+    ('detector-default-ip-settings', 'Detector Default IP settings', 'Network', ['All'], 'detector default ip address settings reference', '36ca9088-5bbb-80e9-907d-cd17721c25ba'),
+    # --- Software ---
+    ('console-upgrade-16-1', 'Upgrade to 16.1', 'Software', ['Console/PC'], 'upgrade 16.1 console backup checklist hotfix', '34aa9088-5bbb-80cb-97b5-c8922dd86d8e'),
+    ('console-distribution-settings', 'Distribution settings', 'Software', ['Console/PC'], 'distribution settings complete button storage output', '352a9088-5bbb-80cf-929e-d906f98d77c4'),
+    ('console-pm-procedures', 'PM Procedures', 'Software', ['Console/PC'], 'pm procedures backup acronis serial number wmic', '2f6a9088-5bbb-80b6-9769-feee19c2b046'),
+    ('console-retake-analysis', 'Retake analysis', 'Software', ['Console/PC'], 'retake analysis config storage clear evaluate', '352a9088-5bbb-807c-b55f-fadc59f1c6d3'),
+    ('uu-protocol-setting', 'Protocol Setting', 'Software', ['Console/PC'], 'protocol setting inverted image kv mas uu', '2f6a9088-5bbb-8047-9297-d6081f42a9e8'),
+    ('uu-default-panel-selector', 'Default panel(technical code/selector)', 'Software', ['Console/PC'], 'default panel technical code selector uu exposure', '2f6a9088-5bbb-8047-b98d-d30e5f01e504'),
+    ('uu-auto-shutter', 'Auto Shutter', 'Software', ['Console/PC'], 'auto shutter shadow masking distribution code uu', '2f6a9088-5bbb-80fd-94ca-c09c1dedbb41'),
+    ('uu-printing-film-info', 'Printing Film Info on top', 'Software', ['Console/PC'], 'printing film info true size ratio layout', '306a9088-5bbb-8035-8ac8-d4feb0d8302f'),
+    ('uu-aec-xray-control-params', 'AEC in X-ray control parameters', 'Software', ['Console/PC'], 'aec x-ray control parameters sensitivity density detection field', '352a9088-5bbb-8048-b274-ff107831ceca'),
+    ('uu-trimming-settings', 'Trimming Settings', 'Software', ['Console/PC'], 'trimming settings auto size position protocol', '352a9088-5bbb-80ef-8dd0-ef7d6b5594c2'),
+    ('su-network-config-other-nodes', 'SU Network Config - All Other Nodes', 'Software', ['Console/PC'], 'su network config mpps dicom nodes presentation', '2f6a9088-5bbb-80bb-90b4-f46fdc8fc51f'),
+    ('console-330cl-reinstall', '330CL (application) Re-install', 'Software', ['Console/PC'], '330cl reinstall console application sql wizard', '2e9a9088-5bbb-8064-9c01-debd2bfa390c'),
+    ('mc-update-install-procedure', 'MC update/install procedure', 'Software', ['Console/PC'], 'mc crash reinstall panel registration ip backup', '303a9088-5bbb-8092-8dff-d16a1f170af8'),
+    ('clinic-pm-procedures', 'Clinic PM Procedures', 'Software', ['Console/PC'], 'clinic pm backup media auto mount su config', '2f6a9088-5bbb-8091-94c3-d3b54a4a1df5'),
+    ('ha-pm-procedures', 'HA PM procedures', 'Software', ['All'], 'ha pm checklist linearity radiowave measurement log', '29ca9088-5bbb-80cb-863b-f94f8c940589'),
+    # --- QA/PM ---
+    ('qa-procedures-calibration-full', 'QA Procedures & Calibration Methods (FULL)', 'QA/PM', ['All'], 'qa procedures calibration methods full guide', 'e016c456-24df-4f17-99d8-6cda980eff74'),
+    ('dap-calibration-go-plus', 'DAP calibration (GoPlus)', 'QA/PM', ['Go Plus'], 'dap calibration go plus dose area product', '399a9088-5bbb-8041-9258-db265a71939c'),
+    ('ei-di-calibration', 'EI/DI calibration', 'QA/PM', ['All'], 'ei di calibration exposure index deviation', '3aa596eb-4bda-497f-ab99-47e121b3eca7'),
+    ('exposure-chart-reference', 'Exposure Chart (ref.)', 'QA/PM', ['All'], 'exposure chart reference kv mas', '306a9088-5bbb-8070-b69e-e3795a253f51'),
+    ('tube-qa-image-reference', 'Tube QA (Image ref.)', 'QA/PM', ['All'], 'tube qa image reference xview key values', '330a9088-5bbb-80c3-8e2b-f2bcbdd239ec'),
+    ('qa-general', 'QA', 'QA/PM', ['All'], 'qa general procedure reference', '33ea9088-5bbb-8030-9c7d-d13ffc91de52'),
+    ('area-dose-product', 'Area Dose Product', 'QA/PM', ['All'], 'area dose product dap measurement', '35ea9088-5bbb-8012-98fa-c44f9b26e5d2'),
+    ('safety-test', 'Safety test', 'QA/PM', ['All'], 'safety test procedure calibration', '34ba9088-5bbb-8063-9ac2-d40049eceefc'),
+]
+
+# Per-page credential scan (title + rendered text, case-insensitive). A hit DROPS
+# the page entirely — better to lose a guide than leak a password into the bundle.
+KB_CREDENTIAL_RE = re.compile(
+    r"password|passwd|\bpw\s*[:：=]|登入|密碼|wifi[-\s]?pw|console login"
+    r"|306a9088-5bbb-807d-8d54-ee8f0955e40f", re.I)
+
+def build_kb():
+    """SOP guide pages -> full text. ALLOWLIST-only; never follows mentions/links."""
+    print("Pulling KB guide pages (SOP hub) ...")
+    out, dropped, skipped = [], [], []
+    for slug, title, cat, mach, kw, page_id in KB_PAGES:
+        try:
+            body = render_blocks(block_children(page_id))
+        except SystemExit as e:
+            print(f"  WARNING kb page {slug} skipped ({e})")
+            skipped.append(slug)
+            continue
+        m = KB_CREDENTIAL_RE.search(f"{title} {body}")
+        if m:
+            print(f"  WARNING kb page {slug} DROPPED — credential marker '{m.group(0)}'")
+            dropped.append(slug)
+            continue
+        out.append({"id": slug, "title": title, "cat": cat, "mach": mach, "kw": kw,
+                     "md": body, "url": f"https://www.notion.so/{page_id.replace('-', '')}"})
+    print(f"kb: {len(out)} loaded, {len(dropped)} dropped, {len(skipped)} skipped")
+    return out, {"loaded": len(out), "dropped": dropped, "skipped": skipped}
+
+# ----------------------------------------------------------------------------
+# Service Manual KB Hub — transcribed OFFICIAL manuals. Index only (no body text),
+# EXCEPT per-code error cards (full text), by R's decision 2026-09-27.
+# ----------------------------------------------------------------------------
+MANUAL_DBS = [
+    # (key,     label,                              machine family, database id)
+    ("nano",   "FDR nano (DR-XD1000)",               "Nano",    "07635e71-0b6a-42dd-b781-4046c30e0788"),
+    ("1200",   "DR-ID 1200",                         "D-evo",   "e27148f6-67f2-4444-8205-d40de77a1621"),
+    ("goplus", "FDR Go PLUS",                        "Go Plus", "ce186e41-9fd9-4aa3-8234-cd4ab52fbf33"),
+    ("1800",   "DR-ID 1800",                         "D-evo",   "d105e499-5b09-4504-a127-b7911eafd2d0"),
+    ("330cl",  "DR-ID 330CL console",                "Console", "0504aa27-9563-4701-a58d-9baf5cd845c2"),
+    ("300cl",  "DR-ID 300CL console",                "Console", "375723ba-0e4b-4791-8473-1ce522e7ca53"),
+]
+# Shared schema across these DBs (verified on Go PLUS + 1800): Section (title),
+# Section No (text), Chapter (select), Purpose (select: Diagnose/Procedure/
+# Reference/Setting/Overview), Error Codes (text, may hold several codes),
+# Keywords (multi_select), Content Loaded (checkbox), Has Figures (checkbox),
+# Figures (text), Source Pages (text). nano/1200/300CL are NOT verified —
+# prop() tolerates a missing property (returns ""), never KeyError.
+MANUAL_CODES_SPLIT_RE = re.compile(r"[,;/\s]+")
+# "Error A10", "11112 Error" — a section-type row that merely LISTS codes
+# ("4.1.2 Failure error message list") does not match this.
+MANUAL_CODE_TITLE_RE = re.compile(r"^\s*(?:error\s+\S+|\S+\s+error)\s*$", re.I)
+MCODES_SIZE_GUARD = 1_500_000   # chars, see build_manuals()
+
+def build_manuals():
+    """Returns (mref, mcodes). mref = index row for EVERY manual page, no body
+    text ever (assert enforces it). mcodes = full text, error-code cards only."""
+    print("Pulling Service Manual KB Hub ...")
+    mref, mcodes, status = [], [], {}
+    for key, label, fam, dbid in MANUAL_DBS:
+        try:
+            rows = query_db(dbid)
+        except SystemExit as e:
+            print(f"  WARNING manual {key} skipped ({e})")
+            status[key] = {"rows": 0, "cards": 0, "error": str(e)}
+            continue
+        rcount = ccount = 0
+        for r in rows:
+            p = r.get("properties", {})
+            section = prop(p, "Section")
+            secno = prop(p, "Section No")
+            purpose = prop(p, "Purpose")
+            codes_raw = prop(p, "Error Codes")
+            codes = [c.strip().upper() for c in MANUAL_CODES_SPLIT_RE.split(str(codes_raw or "")) if c.strip()]
+            loaded = bool(prop(p, "Content Loaded"))
+            mref.append({"m": key, "no": secno, "t": section, "ch": prop(p, "Chapter"),
+                         "p": purpose, "codes": codes, "fig": bool(prop(p, "Has Figures")),
+                         "ok": loaded, "url": r.get("url", "")})
+            rcount += 1
+            if purpose == "Diagnose" and codes and loaded and MANUAL_CODE_TITLE_RE.match(str(section or "")):
+                try:
+                    body = render_blocks(block_children(r["id"]))
+                except SystemExit as e:
+                    print(f"  WARNING manual {key} error card '{section}' skipped ({e})")
+                    continue
+                mcodes.append({"m": key, "codes": codes, "t": section, "no": secno,
+                               "pages": prop(p, "Source Pages"), "fig": prop(p, "Figures"),
+                               "md": body, "url": r.get("url", "")})
+                ccount += 1
+        status[key] = {"rows": rcount, "cards": ccount, "error": None}
+        print(f"  manual {key}: {rcount} index rows, {ccount} error cards")
+    total_chars = sum(len(c.get("md", "")) for c in mcodes)
+    if total_chars > MCODES_SIZE_GUARD:
+        sys.exit("FATAL: manual error cards exceed 1.5M chars — R must approve before this ships")
+    assert not any("md" in r for r in mref)
+    return mref, mcodes, status
 
 # Leak check
 HARD_MARKERS = ["306a9088-5bbb-807d-8d54-ee8f0955e40f",  # Hospital Specific Info page id
@@ -848,12 +1031,16 @@ def main():
     hkt = timezone(timedelta(hours=8))
     items, sectors = build_items()
     svc = build_svc()
+    kb, kbstat = build_kb()
+    mref, mcodes, manual_stat = build_manuals()
     bundle = {
         "asof": datetime.now(hkt).strftime("%Y-%m-%d %H:%M") + " HKT",
         "items": items, "sectors": sectors, "svc": svc,
         "pm": build_pm(), "parts": build_parts(svc),
         "cards": build_cards(), "errors": build_errors(),
         "procedures": build_procedures(),
+        "kb": kb, "mref": mref, "mcodes": mcodes,
+        "kbstatus": {"kb": kbstat, "manuals": manual_stat},
     }
     blob = json.dumps(bundle, ensure_ascii=False, separators=(",", ":"))
     print(f"Bundle: {len(blob)/1e6:.2f} MB")
