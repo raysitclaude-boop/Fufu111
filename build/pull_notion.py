@@ -72,11 +72,12 @@ PROCEDURE_DOCS = [
 # ----------------------------------------------------------------------------
 
 # SOP guide pages (R's own write-ups) — FULL TEXT, admin bundle only.
-# ALLOWLIST: only these page ids are read. Credential pages are deliberately absent.
+# ALLOWLIST: only these page ids are read. Admin bundle only (kb is not a worker key).
 KB_PAGES = [
     # (id_slug, title, category, [machine families], "keywords", page_id)
-    # Drafted 2026-09-27 from the SOP hub walk. EXCLUDED on purpose: credential pages
-    # (Nano POCX, 隱藏password, WiFi Aruba/Adapter, UU Settings, Router setting), Solution
+    # Drafted 2026-09-27 from the SOP hub walk; revised same day after the SOP review
+    # (claude/SOP_Review_2026-09-27.md): credential pages now INCLUDED (admin-only, R's
+    # decision); MI11021, Tube QA (Image ref.) and QA WITHHELD. Still EXCLUDED: Solution
     # Cards (already in CARDS), the calibration values page (already in PROCEDURE_DOCS),
     # category hubs, image-only/empty pages, and anything copied from the manuals.
     # build_kb() also drops any page whose text matches KB_CREDENTIAL_RE at build time.
@@ -93,7 +94,6 @@ KB_PAGES = [
     ('go-plus-tube-head-adjust', 'Tube Head Adjust', 'Hardware', ['Go Plus'], 'tube head adjust alignment go plus procedure', '305a9088-5bbb-805d-8156-e4ae030e6c9a'),
     ('go-plus-collimator-replace', 'Collimator replacement [GO PLUS]', 'Hardware', ['Go Plus'], 'collimator replacement go plus procedure', '302a9088-5bbb-8041-8f42-d7449e279323'),
     ('go-plus-light-field-test', 'Light Field Acceptance Test', 'Hardware', ['Go Plus'], 'light field acceptance test collimator alignment', '302a9088-5bbb-8024-a381-e8ecb3897b41'),
-    ('go-plus-error-mi11021', 'Error Meaning (MI11021)', 'Hardware', ['Go Plus'], 'error mi11021 meaning code go plus', '2fba9088-5bbb-8055-abf0-e235be336bf4'),
     ('go-plus-tube-filament-check', 'Tube filament check', 'Hardware', ['Go Plus'], 'tube filament check test go plus procedure', '312a9088-5bbb-8081-9205-d4d1c21e3491'),
     ('go-plus-handswitch-bluetooth', 'Wireless Hand Switch Bluetooth', 'Hardware', ['Go Plus'], 'wireless hand switch bluetooth pairing go plus', '31fa9088-5bbb-80b2-8895-e355fda7e08d'),
     ('mammo-system', 'Mammo', 'Hardware', ['Mammo'], 'mammo system quick reference hardware index', '36ca9088-5bbb-80bf-a862-e38c1ebf83a4'),
@@ -138,27 +138,35 @@ KB_PAGES = [
     ('mc-update-install-procedure', 'MC update/install procedure', 'Software', ['Console/PC'], 'mc crash reinstall panel registration ip backup', '303a9088-5bbb-8092-8dff-d16a1f170af8'),
     ('clinic-pm-procedures', 'Clinic PM Procedures', 'Software', ['Console/PC'], 'clinic pm backup media auto mount su config', '2f6a9088-5bbb-8091-94c3-d3b54a4a1df5'),
     ('ha-pm-procedures', 'HA PM procedures', 'Software', ['All'], 'ha pm checklist linearity radiowave measurement log', '29ca9088-5bbb-80cb-863b-f94f8c940589'),
+    # --- Access / credentials (ADMIN bundle only — R lifted the credential restriction for
+    #   the admin KB on 2026-09-27; `kb` is not in WORKER_KEYS, so these never reach dataw.enc) ---
+    ('nano-pocx-access', 'Nano POCX access', 'Software', ['Nano'], 'nano pocx service login access', '334a9088-5bbb-8013-84a9-d01c573979c0'),
+    ('uu-settings-access', 'UU Settings (access)', 'Software', ['Console/PC'], 'uu settings console access login', '2f6a9088-5bbb-80b3-9bed-ec5793708e60'),
+    ('hidden-password-reveal', 'Hidden password (reveal)', 'Network', ['All'], 'hidden password reveal f12 inspect', '31fa9088-5bbb-8036-aa50-fd29cb509a2e'),
+    ('wifi-aruba-adapter', 'WiFi Aruba/Adapter replacement', 'Network', ['All'], 'wifi aruba adapter replacement setup', '2fea9088-5bbb-801c-86d0-daa7d472491f'),
+    ('router-setting', 'Router setting', 'Network', ['All'], 'router setting ap configuration', '375a9088-5bbb-80d3-8a3c-e612ad79f695'),
     # --- QA/PM ---
     ('qa-procedures-calibration-full', 'QA Procedures & Calibration Methods (FULL)', 'QA/PM', ['All'], 'qa procedures calibration methods full guide', 'e016c456-24df-4f17-99d8-6cda980eff74'),
     ('dap-calibration-go-plus', 'DAP calibration (GoPlus)', 'QA/PM', ['Go Plus'], 'dap calibration go plus dose area product', '399a9088-5bbb-8041-9258-db265a71939c'),
     ('ei-di-calibration', 'EI/DI calibration', 'QA/PM', ['All'], 'ei di calibration exposure index deviation', '3aa596eb-4bda-497f-ab99-47e121b3eca7'),
     ('exposure-chart-reference', 'Exposure Chart (ref.)', 'QA/PM', ['All'], 'exposure chart reference kv mas', '306a9088-5bbb-8070-b69e-e3795a253f51'),
-    ('tube-qa-image-reference', 'Tube QA (Image ref.)', 'QA/PM', ['All'], 'tube qa image reference xview key values', '330a9088-5bbb-80c3-8e2b-f2bcbdd239ec'),
-    ('qa-general', 'QA', 'QA/PM', ['All'], 'qa general procedure reference', '33ea9088-5bbb-8030-9c7d-d13ffc91de52'),
     ('area-dose-product', 'Area Dose Product', 'QA/PM', ['All'], 'area dose product dap measurement', '35ea9088-5bbb-8012-98fa-c44f9b26e5d2'),
     ('safety-test', 'Safety test', 'QA/PM', ['All'], 'safety test procedure calibration', '34ba9088-5bbb-8063-9ac2-d40049eceefc'),
 ]
 
 # Per-page credential scan (title + rendered text, case-insensitive). A hit DROPS
 # the page entirely — better to lose a guide than leak a password into the bundle.
+# R 2026-09-27: credentials are ALLOWED in the admin KB (kb is admin-only — not in
+# WORKER_KEYS). A credential marker now only FLAGS the page in the build log/kbstatus.
+# A mention of the Hospital Specific Info page is also only flagged (R, same day).
 KB_CREDENTIAL_RE = re.compile(
-    r"password|passwd|\bpw\s*[:：=]|登入|密碼|wifi[-\s]?pw|console login"
-    r"|306a9088-5bbb-807d-8d54-ee8f0955e40f", re.I)
+    r"password|passwd|\bpw\s*[:：=]|登入|密碼|wifi[-\s]?pw|console login", re.I)
+KB_HSI_RE = re.compile(r"306a9088-?5bbb-?807d-?8d54-?ee8f0955e40f", re.I)
 
 def build_kb():
     """SOP guide pages -> full text. ALLOWLIST-only; never follows mentions/links."""
     print("Pulling KB guide pages (SOP hub) ...")
-    out, dropped, skipped = [], [], []
+    out, dropped, skipped, flagged, hsi_ref = [], [], [], [], []
     for slug, title, cat, mach, kw, page_id in KB_PAGES:
         try:
             body = render_blocks(block_children(page_id))
@@ -166,15 +174,20 @@ def build_kb():
             print(f"  WARNING kb page {slug} skipped ({e})")
             skipped.append(slug)
             continue
+        # R 2026-09-27 (later): a mention of the Hospital Specific Info page no longer drops
+        # the page either — flagged only. build_kb() never follows mentions, so the HSI
+        # page's own content is still never pulled.
+        if KB_HSI_RE.search(f"{title} {body}"):
+            print(f"  NOTE kb page {slug} mentions Hospital Specific Info — kept (admin-only)")
+            hsi_ref.append(slug)
         m = KB_CREDENTIAL_RE.search(f"{title} {body}")
         if m:
-            print(f"  WARNING kb page {slug} DROPPED — credential marker '{m.group(0)}'")
-            dropped.append(slug)
-            continue
+            print(f"  NOTE kb page {slug} contains credential marker '{m.group(0)}' — kept (admin-only)")
+            flagged.append(slug)
         out.append({"id": slug, "title": title, "cat": cat, "mach": mach, "kw": kw,
                      "md": body, "url": f"https://www.notion.so/{page_id.replace('-', '')}"})
-    print(f"kb: {len(out)} loaded, {len(dropped)} dropped, {len(skipped)} skipped")
-    return out, {"loaded": len(out), "dropped": dropped, "skipped": skipped}
+    print(f"kb: {len(out)} loaded, {len(dropped)} dropped, {len(skipped)} skipped, {len(flagged)} with credentials (admin-only)")
+    return out, {"loaded": len(out), "dropped": dropped, "skipped": skipped, "credentials": flagged, "hsi_ref": hsi_ref}
 
 # ----------------------------------------------------------------------------
 # Service Manual KB Hub — transcribed OFFICIAL manuals. Index only (no body text),
@@ -380,6 +393,12 @@ def render_blocks(blocks, depth=0):
             out.append("`" + rich(d.get("rich_text")) + "`")
         elif t == "divider":
             out.append("---")
+        elif t in ("image", "video", "pdf", "file", "embed"):
+            cap = rich(d.get("caption"))
+            label = {"image": "📷 Image", "video": "🎞 Video", "pdf": "📄 PDF",
+                     "file": "📎 File", "embed": "🔗 Embed"}[t]
+            # index.html's md() has no italics — keep this plain text in brackets.
+            out.append(f"[{label}{(': ' + cap) if cap else ''} — view on the Notion page]")
         elif t == "table":
             out.append(render_table(b))
             continue  # table children already consumed

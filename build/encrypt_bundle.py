@@ -36,6 +36,10 @@ SRC = "data/bundle.json"
 # or WiFi keys R typed in, which the shared-password boundary keeps out of the
 # worker's offline file.
 WORKER_KEYS = ["asof", "items", "sectors", "pm", "svc", "parts"]
+# Hard guard: admin-only keys (which may now carry credentials in `kb`) must never
+# be allowlisted for the worker bundle.
+_ADMIN_ONLY = {"kb", "cards", "errors", "procedures", "mref", "mcodes", "kbstatus"}
+assert not (set(WORKER_KEYS) & _ADMIN_ONLY), "admin-only key in WORKER_KEYS"
 
 def worker_svc(svc):
     """Structured CM fields only for the worker bundle: date, machine, serial,
