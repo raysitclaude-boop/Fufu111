@@ -136,6 +136,61 @@ const CARD_L2={artifacts:['Artifacts'],'charging-pins':['Charging Pins'],bcr:['B
 const $=id=>document.getElementById(id), V=()=>$('view');
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+// ================= V5.10: Fix > By Symptom =================
+// MERGE KEY (lowercased, trimmed, single-spaced raw symptom) -> canonical
+// display name override. The merge key is case-insensitive so "Hand switch
+// malfunction" and "hand switch malfunction" collapse into one entry; the
+// DISPLAY name is normally the most-frequent original spelling seen among
+// that entry's CM records (see symIndex()) — this map overrides that for a
+// handful of raw spellings that are typos or a poor label ("Error SM10006 HD
+// is full" -> "Hard Disk Full"), regardless of how often each was typed.
+const SYM_ALIAS={
+  'poor wifi conneciton':'Poor Wifi Connection',
+  'inspection on scews':'Inspection on screws',
+  'error sm10006 hd is full':'Hard Disk Full',
+  'charging pins damaged':'Detector charging pins damaged',
+};
+// Not faults — shown in a separate collapsed "Service / admin" group. Keys
+// here are MERGE KEYS (lowercased raw), matched against a symptom's key —
+// never its (possibly differently-cased) display name.
+const SYM_ADMIN=new Set(['inspection on screws','screws check','installation','detector installation',
+  'update software','return claimed panel','detector claimed in tims','printer set up']);
+// trim + collapse whitespace, no case change — the literal spelling as typed.
+function symNorm(raw){ return String(raw||'').trim().replace(/\s+/g,' '); }
+// merge key for a raw symptom string (pure, no alias, no DB context).
+function symKey(raw){ return symNorm(raw).toLowerCase(); }
+// canonSym(raw): the DISPLAY name for a raw symptom string. SYM_ALIAS wins
+// outright; otherwise, once symIndex() has aggregated the bundle, this is the
+// most-frequent original spelling for that merge key (so "Error 'A9'" keeps
+// its exact casing/quoting when that is how it was actually typed). Before
+// the index is built (or for a key the index has never seen), falls back to
+// the literal text as given — never invents capitalization of its own.
+function canonSym(raw){
+  const norm=symNorm(raw); if(!norm)return '';
+  const k=norm.toLowerCase();
+  if(SYM_ALIAS[k])return SYM_ALIAS[k];
+  if(SYM_IDX&&SYM_IDX.has(k))return SYM_IDX.get(k).name;
+  return norm;
+}
+// isAdminSym: checks a MERGE KEY (or anything that lowercases to one) against
+// SYM_ADMIN — always lowercases its input, so it works whether it's handed a
+// raw string, a merge key, or (loosely) a display name.
+function isAdminSym(nameOrKey){ return SYM_ADMIN.has(String(nameOrKey||'').toLowerCase()); }
+// Machine family, for the Fix chips (and elsewhere a coarse grouping is needed).
+function machFam(str){
+  const s=String(str||'');
+  if(/go\s*plus|^go$/i.test(s))return 'Go Plus';
+  if(/nano/i.test(s))return 'Nano';
+  if(/d-?evo|dr-id\s*1[28]/i.test(s))return 'D-evo';
+  if(/smart/i.test(s))return 'FDR Smart';
+  if(/^pc$|console|300cl|330cl/i.test(s))return 'Console/PC';
+  if(/retrofit/i.test(s))return 'Retrofit';
+  if(/mammo/i.test(s))return 'Mammo';
+  if(/se lite/i.test(s))return 'SE Lite';
+  return 'Other';
+}
+let symMach='All', symAllMach=false, symPageN=20, SYM_CUR=null, SYM_IDX=null, SYM_BY_NAME=null, SYM_UNTAGGED=0, MCODE_BY_CODE=null;
+
 // ================= V4 config =================
 const WORKER_URL='https://fuji-field-proxy.raysit-claude.workers.dev';
 const WRITE_KEY_LS='fw_wkey', NAME_LS='fw_name', OUTBOX_LS='fw_outbox', VISITS_LS='fw_visits';
@@ -156,6 +211,8 @@ function canonName(n){
 }
 const canonList=a=>[...new Set((Array.isArray(a)?a:(a?[a]:[])).map(canonName).filter(Boolean))];
 
+// Notion links: only ever emit https:// hrefs (Notion data must never produce a javascript: URL).
+const notionLink=(u,cls)=>/^https:\/\/[^\s"'<>]+$/.test(String(u||''))?`<a${cls?` class="${cls}"`:''} href="${esc(u)}" target="_blank" rel="noopener">Open in Notion ↗</a>`:'';
 // ---------- markdown renderer (headings / lists / tables / code / bold) ----------
 function md(src){
   const lines=String(src||'').split('\n'); let out=[], i=0;
@@ -216,7 +273,7 @@ async function unlock(){
   boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-const APP_VER='v5.9';
+const APP_VER='v5.10';
 // --- HA cluster names -------------------------------------------------------
 // The official HA list has 6 clusters; Hong Kong East and Hong Kong West were
 // merged into Hong Kong Island. Old bundles cached on a phone may still carry
@@ -264,8 +321,9 @@ function siteAbbr(name){
 
 function boot(){
   $('gate').style.display='none';
-  ['items','svc','pm','parts','cards','errors'].forEach(k=>DB[k]=DB[k]||[]);
-  DB.sectors=DB.sectors||{}; DB.procedures=DB.procedures||{};
+  ['items','svc','pm','parts','cards','errors','kb','mref','mcodes'].forEach(k=>DB[k]=DB[k]||[]);
+  DB.sectors=DB.sectors||{}; DB.procedures=DB.procedures||{}; DB.kbstatus=DB.kbstatus||{};
+  SYM_IDX=null; SYM_BY_NAME=null; SYM_UNTAGGED=0; MCODE_BY_CODE=null;   // old bundles won't have kb/mref/mcodes/kbstatus until the next nightly build
   ROLE=DB.role||'admin';
   // normalise engineer names once, so old bundles are fixed without a rebuild
   DB.pm.forEach(x=>{x.pic=canonList(x.pic);x.apic=canonList(x.apic);x.chk=canonList(x.chk);});
@@ -298,14 +356,14 @@ function svcLine(s){
 
 // ---------- router ----------
 function go(p,arg){
-  if(ROLE==='worker'&&['fix','analysis','card','part'].includes(p))p='pm';
-  if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox','assetnet','assetinfo'].includes(p))PREV=route;
+  if(ROLE==='worker'&&['fix','analysis','card','part','sym','kb','mcode'].includes(p))p='pm';
+  if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox','assetnet','assetinfo','sym','kb','mcode'].includes(p))PREV=route;
   route={p,arg}; render(); window.scrollTo(0,0);
 }
 function render(){
-  const map={item:'serial',site:'sites',card:'fix',part:'parts',visitnew:'pm',visitedit:'pm',logresult:'pm',mismatch:'serial',outbox:'pm',assetnet:'serial',assetinfo:'serial'};
+  const map={item:'serial',site:'sites',card:'fix',part:'parts',visitnew:'pm',visitedit:'pm',logresult:'pm',mismatch:'serial',outbox:'pm',assetnet:'serial',assetinfo:'serial',sym:'fix',kb:'fix',mcode:'fix'};
   ['sites','serial','fix','parts','pm','analysis'].forEach(k=>$('nb-'+k)?.classList.toggle('on',route.p===k||map[route.p]===k));
-  ({sites,serial,fix,parts,pm,analysis,item,site,card,part,visitnew,visitedit,logresult,mismatch,outbox,assetnet,assetinfo})[route.p](route.arg);
+  ({sites,serial,fix,parts,pm,analysis,item,site,card,part,visitnew,visitedit,logresult,mismatch,outbox,assetnet,assetinfo,sym,kb,mcode})[route.p](route.arg);
 }
 
 // ---------- Sites ----------
@@ -487,12 +545,131 @@ function fix(){
    </div><div id=fixbody></div>`;
   ({symptom:fixSymptom,errors:fixErrors,proc:fixProc})[fixTab]();
 }
-// --- 1) By Symptom (Solution Cards + past cases) ---
+// --- 1) By Symptom (symptom index + Solution Cards + guides + manual + past cases) ---
+// Manual-DB key -> display label (mirrors build/pull_notion.py MANUAL_DBS; the
+// bundle itself carries only the key, to keep mref/mcodes rows small).
+const MANUAL_LABELS={nano:'FDR nano (DR-XD1000)','1200':'DR-ID 1200',goplus:'FDR Go PLUS','1800':'DR-ID 1800','330cl':'DR-ID 330CL console','300cl':'DR-ID 300CL console'};
+const manualLabel=k=>MANUAL_LABELS[k]||k;
+// Manual-DB key -> machine family (chip name), for restricting related-manual lookups to the selected chip.
+const MANUAL_FAM={nano:'Nano','1200':'D-evo',goplus:'Go Plus','1800':'D-evo','330cl':'Console/PC','300cl':'Console/PC'};
+// Error Codes page id (DB.errors) -> manual-DB key(s) sharing the same machine family, for the 📖 Manual card link in Fix > Error Codes.
+const ERR_TO_MANUAL={goplus:['goplus'],nano:['nano'],devo3:['1800','1200']};
+function machMatch(s){ return symMach==='All'||(s.mach||[]).some(m=>machFam(m)===symMach); }
+// families with ≥1 CM record, in count order (drives the machine chips)
+function machFamOrder(){
+  const counts={};
+  DB.svc.forEach(s=>(s.mach||[]).forEach(m=>{const f=machFam(m);counts[f]=(counts[f]||0)+1;}));
+  return Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
+}
+// canonical symptom name -> {name, recs:[svc refs], admin:bool}, memoised once per data load
+// Map: merge key -> canonical entry {name (DISPLAY), key, recs, admin}.
+// DISPLAY = SYM_ALIAS override, else the most-frequent original raw spelling
+// for that key (tie -> first seen). Both `counts` (key -> Map(spelling->n))
+// and each per-key spelling Map preserve first-seen insertion order, so a
+// strict ">" when tracking the running max already gives "first seen wins
+// ties" for free — no separate tie-break pass needed.
+function symIndex(){
+  if(SYM_IDX)return SYM_IDX;
+  const counts=new Map(), recsByKey=new Map(); let untagged=0;
+  DB.svc.forEach(s=>{
+    const raws=(s.sym||[]).map(symNorm).filter(Boolean);
+    if(!raws.length){untagged++;return;}
+    const keysThisRec=new Set();
+    raws.forEach(spelling=>{
+      const key=spelling.toLowerCase();
+      if(!counts.has(key))counts.set(key,new Map());
+      const cmap=counts.get(key);
+      cmap.set(spelling,(cmap.get(spelling)||0)+1);
+      keysThisRec.add(key);
+    });
+    keysThisRec.forEach(key=>{
+      if(!recsByKey.has(key))recsByKey.set(key,[]);
+      recsByKey.get(key).push(s);
+    });
+  });
+  const idx=new Map(), byName=new Map();
+  counts.forEach((cmap,key)=>{
+    let name=SYM_ALIAS[key];
+    if(!name){
+      let best=null,bestN=-1;
+      cmap.forEach((n,spelling)=>{ if(n>bestN){best=spelling;bestN=n;} });
+      name=best;
+    }
+    const entry={name,key,recs:recsByKey.get(key)||[],admin:isAdminSym(key)};
+    idx.set(key,entry); byName.set(name,entry);
+  });
+  SYM_UNTAGGED=untagged; SYM_IDX=idx; SYM_BY_NAME=byName;
+  return idx;
+}
+// Look up a symptom entry by its DISPLAY name (what go('sym', name) receives).
+function symEntryByName(name){
+  symIndex();
+  if(SYM_BY_NAME.has(name))return SYM_BY_NAME.get(name);
+  const low=String(name||'').toLowerCase();
+  for(const e of SYM_BY_NAME.values())if(e.name.toLowerCase()===low)return e;
+  return null;
+}
+function symRow(e){
+  const fams={};
+  e.recs.forEach(s=>(s.mach||[]).forEach(m=>{const f=machFam(m);fams[f]=(fams[f]||0)+1;}));
+  const top=Object.entries(fams).sort((a,b)=>b[1]-a[1]).slice(0,3).map(x=>x[0]).join(', ');
+  return `<div class="card click" onclick="go('sym',${JSON.stringify(e.name).replace(/"/g,'&quot;')})">
+   <div class="row"><h3>${esc(e.name)}</h3><span class="tag acc">×${e.recs.length}</span></div>
+   ${top?`<div class="dim">${esc(top)}</div>`:''}</div>`;
+}
+function drawSymDefault(){
+  const idx=symIndex();
+  const withN=e=>({e,n:e.recs.filter(machMatch).length});
+  const rows=[...idx.values()].filter(e=>!e.admin).map(withN).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+  const admin=[...idx.values()].filter(e=>e.admin).map(withN).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+  const filtered=x=>({...x.e,recs:x.e.recs.filter(machMatch)});
+  let html=rows.map(x=>symRow(filtered(x))).join('');
+  if(admin.length)html+=`<details class="proc"><summary><span>Service / admin entries</span><span class="tag">${admin.length}</span></summary><div class="body">${admin.map(x=>symRow(filtered(x))).join('')}</div></details>`;
+  html+=`<div class="hint">${SYM_UNTAGGED} CM record${SYM_UNTAGGED===1?'':'s'} ${SYM_UNTAGGED===1?'has':'have'} no symptom tag — type to search them.</div>`;
+  if(!(DB.kb||[]).length&&!(DB.mref||[]).length&&!(DB.mcodes||[]).length)
+    html+=`<div class="hint">📘 Manual index arrives with the next nightly data build.</div>`;
+  $('list').innerHTML=html||'<div class=dim style=margin-top:10px>No symptoms recorded yet.</div>';
+}
+// One dim line summarising anything the nightly build couldn't load — shown
+// only when something is actually missing; '' (nothing rendered) otherwise,
+// including for an old bundle with no DB.kbstatus at all.
+function kbStatusLine(){
+  const st=DB.kbstatus||{}, kbs=st.kb||{}, manuals=st.manuals||{};
+  const dropped=(kbs.dropped||[]).length, skipped=(kbs.skipped||[]).length;
+  const failed=Object.keys(manuals).filter(k=>manuals[k]&&manuals[k].error);
+  const parts=[];
+  if(dropped)parts.push(`${dropped} guide${dropped===1?'':'s'} withheld (credential marker)`);
+  if(skipped)parts.push(`${skipped} guide${skipped===1?'':'s'} not loaded (page unavailable)`);
+  if(failed.length)parts.push(`manual index not loaded: ${failed.join(', ')}`);
+  return parts.length?('⚠ '+parts.join(' · ')):'';
+}
 function fixSymptom(){
-  $('fixbody').innerHTML=`<input type=search id=q placeholder="Symptom, error code, machine… e.g. 'F5F', 'A9', 'artifact'" oninput="fixSearch()">
-   <div id=list>${DB.cards.map(cardRow).join('')}</div>`;
+  const stLine=kbStatusLine();
+  $('fixbody').innerHTML=`<input type=search id=q placeholder="Symptom, error code, part, machine…" oninput="fixSearch()">
+   <div class="chips">${['All',...machFamOrder()].map(f=>`<button class="chip${symMach===f?' on':''}" onclick="symMach=${JSON.stringify(f).replace(/"/g,'&quot;')};fixSymptom()">${esc(f)}</button>`).join('')}</div>
+   ${stLine?`<div class="hint">${esc(stLine)}</div>`:''}
+   <div id=list></div>`;
+  drawSymDefault();
 }
 function cardRow(c){return `<div class="card click" onclick="go('card','${c.id}')"><div class="row"><h3>${esc(c.title)}</h3><span class="tag">${esc(c.cat)}</span></div><div class="dim">${esc((c.machines||[]).join(', '))}</div></div>`}
+function kbRow(k){
+  return `<div class="card click" onclick="go('kb','${k.id}')">
+   <div class="row"><h3>📘 ${esc(k.title)}</h3><span class="tag">${esc(k.cat||'')}</span></div>
+   <div class="dim">${esc((k.mach||[]).join(', '))}</div></div>`;
+}
+function mcodeRow(m,idx){
+  return `<div class="card click" onclick="go('mcode',${idx})">
+   <div class="row"><h3 style="color:var(--acc)">${esc(m.t||'')}</h3><span class="tag">${esc((m.codes||[]).join(', '))}</span></div>
+   <div class="dim">${esc(manualLabel(m.m))}${m.no?(' · §'+esc(m.no)):''}</div></div>`;
+}
+// mref = index-only row (no body text) — always a link out to Notion, never a route
+function mrefRow(r){
+  return `<div class="card">
+   <div class="row"><h3>§${esc(r.no||'')} ${esc(r.t||'')}</h3></div>
+   <div class="dim">${esc(manualLabel(r.m))}${r.ch?(' · '+esc(r.ch)):''}</div>
+   <div>${r.fig?'<span class="tag">📷 Figures</span>':''}${!r.ok?'<span class="tag warn">Placeholder</span>':''}</div>
+   ${notionLink(r.url,'hint')}</div>`;
+}
 // Search the manual error tables across EVERY machine. The symptom box used to
 // ignore DB.errors entirely, so a real manual code (e.g. Go Plus 'F5F') typed
 // into the box whose placeholder invites "error code" returned nothing at all.
@@ -515,16 +692,31 @@ function errHitRow(h){
 }
 function fixSearch(){
   const q=$('q').value.toLowerCase().trim();
-  let out=DB.cards.filter(c=>(c.title+' '+c.keywords+' '+c.content).toLowerCase().includes(q)).map(cardRow).join('');
+  if(!q){drawSymDefault();return}
+  let out='';
   if(q.length>=2){
+    const idx=symIndex();
+    const symHits=[...idx.values()].filter(e=>e.name.toLowerCase().includes(q))
+      .map(e=>({e,n:e.recs.filter(machMatch).length})).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+    if(symHits.length)out+=`<div class="sys">🩺 Symptoms</div>`+symHits.map(x=>symRow({...x.e,recs:x.e.recs.filter(machMatch)})).join('');
+  }
+  const cardHits=DB.cards.filter(c=>(c.title+' '+c.keywords+' '+c.content).toLowerCase().includes(q));
+  if(cardHits.length)out+=`<div class="sys">🧩 Solution cards</div>`+cardHits.map(cardRow).join('');
+  if(q.length>=2){
+    const kbHits=(DB.kb||[]).filter(k=>((k.title||'')+' '+(k.kw||'')+' '+(k.md||'')).toLowerCase().includes(q));
+    if(kbHits.length)out+=`<div class="sys">📘 Guides</div>`+kbHits.map(kbRow).join('');
+    const mcodeHits=(DB.mcodes||[]).map((m,i)=>({m,i})).filter(x=>((x.m.codes||[]).join(' ')+' '+(x.m.t||'')).toLowerCase().includes(q));
+    if(mcodeHits.length)out+=`<div class="sys">📖 Manual error cards</div>`+mcodeHits.map(x=>mcodeRow(x.m,x.i)).join('');
+    const mrefHits=(DB.mref||[]).filter(r=>((r.t||'')+' '+(r.codes||[]).join(' ')).toLowerCase().includes(q)).slice(0,15);
+    if(mrefHits.length)out+=`<div class="sys">📖 Manual index</div>`+mrefHits.map(mrefRow).join('');
     const eh=errHits(q,25);
     if(eh.length)out+=`<div class="sys">📖 Manual error codes (${eh.length}${eh.length===25?'+':''})</div>`+eh.map(errHitRow).join('');
   }
   if(q.length>=3){
-    const rec=DB.svc.filter(s=>((s.sym||[]).join(' ')+' '+(s.err||[]).join(' ')+' '+s.act+' '+s.l2).toLowerCase().includes(q)).slice(0,15);
-    if(rec.length)out+=`<div class="sys">Matching past cases (${rec.length}${rec.length===15?'+':''})</div>`+rec.map(svcLine).join('');
+    const rec=DB.svc.filter(s=>machMatch(s)&&((s.sym||[]).join(' ')+' '+(s.err||[]).join(' ')+' '+s.act+' '+s.l2).toLowerCase().includes(q)).slice(0,30);
+    if(rec.length)out+=`<div class="sys">Matching past cases (${rec.length}${rec.length===30?'+':''})</div>`+rec.map(svcLine).join('');
   }
-  $('list').innerHTML=out||'<div class=dim style=margin-top:10px>No match in solution cards, manual error codes, or past cases. Try 2+ characters, or the SOP hub in Notion.</div>';
+  $('list').innerHTML=out||'<div class=dim style=margin-top:10px>No match in symptoms, solution cards, guides, manual, or past cases. Try 2+ characters, or the SOP hub in Notion.</div>';
 }
 // --- 2) Error Code Index ---
 function fixErrors(){
@@ -534,6 +726,26 @@ function fixErrors(){
    <input type=search id=eq value="${esc(errQuery)}" placeholder="Search code / name / remedy… e.g. '11228', 'battery', 'F5F'" oninput="errQuery=this.value;drawErrors()">
    <div id=elist></div>`;
   drawErrors();
+}
+// Manual error-code card lookup by (manual key, code), built once and reused —
+// so the 📖 Manual card link in the Error Codes table stays cheap.
+function mcodeIndexByFamily(){
+  if(MCODE_BY_CODE)return MCODE_BY_CODE;
+  const idx={};
+  (DB.mcodes||[]).forEach((m,i)=>(m.codes||[]).forEach(c=>{
+    const key=m.m+'|'+c;
+    if(!(key in idx))idx[key]=i;
+  }));
+  MCODE_BY_CODE=idx;
+  return idx;
+}
+function mcodeForFamily(machineId,code){
+  const idx=mcodeIndexByFamily();
+  for(const key of (ERR_TO_MANUAL[machineId]||[])){
+    const hit=idx[key+'|'+code];
+    if(hit!=null)return hit;
+  }
+  return null;
 }
 function drawErrors(){
   const m=(DB.errors||[]).find(x=>x.id===errMachine); if(!m){$('elist').innerHTML='';return}
@@ -551,7 +763,11 @@ function drawErrors(){
     const rows=g.rows.filter(r=>!q||r.join(' ').toLowerCase().includes(q));
     if(!rows.length)return; hits+=rows.length;
     html+=`<div class="sys">${esc(g.title)}</div><div class="caltbl"><table><tr>${g.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`+
-      rows.map(r=>'<tr>'+r.map((c,ci)=>ci===0?`<td><b style="color:var(--acc)">${esc(c)}</b></td>`:`<td>${esc(c)}</td>`).join('')+'</tr>').join('')+`</table></div>`;
+      rows.map(r=>{
+        const mc=mcodeForFamily(m.id,String(r[0]||'').trim().toUpperCase());
+        const link=mc!=null?` <span class="tag acc click" onclick="go('mcode',${mc})">📖 Manual card</span>`:'';
+        return '<tr>'+r.map((c,ci)=>ci===0?`<td><b style="color:var(--acc)">${esc(c)}</b>${link}</td>`:`<td>${esc(c)}</td>`).join('')+'</tr>';
+      }).join('')+`</table></div>`;
   });
   if(hits){$('elist').innerHTML=html;return}
   // Not in the selected machine — look everywhere else before giving up, so a
@@ -597,6 +813,158 @@ function card(id){
   <h2>🧩 ${esc(c.title)}</h2><div class="dim" style="margin:4px 0 10px">${esc((c.machines||[]).join(', '))} · AI draft — verify against SOP; report gaps</div>
   <div class="card md">${md(c.content)}</div>
   ${rel.length?`<div class="sys">⚙️ Parts used for this problem (CM evidence)</div>`+rel.map(partRow).join(''):''}`;
+}
+
+// --- Symptom detail page (route 'sym') ---
+// Pull candidate error codes out of free text: an explicit "error X" / "X error"
+// mention, or a bare code-shaped token (F5F, A9, 11231, SM10006…).
+// Pull error-code-shaped tokens out of free text. A token is a WHOLE WORD —
+// bounded by start/end of string, whitespace, a quote, or ordinary punctuation
+// (never by '.' or '-', so "D-evo2" and "16.7"/"v16.4" stay single tokens and
+// fail the shape check below, instead of splitting into a false "EVO2"/"16").
+// It counts as a code when EITHER:
+//   (a) 2-6 chars, has a digit, and matches /^[A-Z]{0,3}\d{1,5}[A-Z]?$/ (F5F,
+//       A9, 11231, F76) — OR
+//   (b) it's alphanumeric with a digit and the PRECEDING word is "error"
+//       (case-insensitive) — this is the escape hatch for a code that's
+//       longer than 6 chars once written out, e.g. "Error SM10006 HD is full".
+const SYM_CODE_BOUND_RE=/^[\s'"“”‘’,;:()\[\]{}!?]+|[\s'"“”‘’,;:()\[\]{}!?]+$/g;
+const SYM_CODE_SHAPE_RE=/^[A-Z]{0,3}\d{1,5}[A-Z]?$/;
+function extractCodes(text){
+  const words=String(text||'').split(/\s+/).map(w=>w.replace(SYM_CODE_BOUND_RE,''));
+  const out=new Set();
+  for(let i=0;i<words.length;i++){
+    const core=words[i]; if(!core)continue;
+    const up=core.toUpperCase();
+    const alnumWithDigit=/^[A-Z0-9]+$/.test(up)&&/\d/.test(up);
+    if(up.length>=2&&up.length<=6&&alnumWithDigit&&SYM_CODE_SHAPE_RE.test(up)){
+      out.add(up);
+    }else if(alnumWithDigit&&i>0&&words[i-1].toLowerCase()==='error'){
+      out.add(up);
+    }
+  }
+  return out;
+}
+function errHitsForCode(code){
+  const exact=errHits(code.toLowerCase(),200).filter(h=>String(h.r[0]||'').trim().toUpperCase()===code);
+  return exact.length?exact:errHits(code.toLowerCase(),10);
+}
+function symToggleAllMach(){ symAllMach=!symAllMach; render(); }
+function symShowMore(){ symPageN+=20; render(); }
+function sym(name){
+  if(SYM_CUR!==name){ symAllMach=false; symPageN=20; SYM_CUR=name; }
+  const e=symEntryByName(name);
+  if(!e){V().innerHTML=`<span class="back" onclick="goBack()">← Troubleshoot</span><div class=dim style=margin-top:10px>Symptom not found.</div>`;return}
+  name=e.name;   // canonical display, in case the caller passed a case-variant
+  const chipOn=symMach!=='All';
+  const allCases=e.recs;
+  const cases=(chipOn&&!symAllMach)?allCases.filter(machMatch):allCases;
+  const dates=cases.map(s=>s.d).filter(Boolean).sort();
+  const revisits=cases.filter(s=>s.rv==='Revisited').length;
+  let html=`<span class="back" onclick="goBack()">← Troubleshoot</span>
+   <h2>🩺 ${esc(name)}</h2>
+   <div class="dim">${cases.length} case${cases.length===1?'':'s'}`+
+    (chipOn?(symAllMach
+      ?` (all machines) · <span class="click" style="color:var(--acc)" onclick="symToggleAllMach()">only ${esc(symMach)}</span>`
+      :` · ${esc(symMach)} · <span class="click" style="color:var(--acc)" onclick="symToggleAllMach()">all machines</span>`):'')+
+    (dates.length?` · ${esc(dates[0])} → ${esc(dates[dates.length-1])}`:'')+
+    (revisits?` · ⚠ ${revisits} revisit${revisits===1?'':'s'}`:'')+
+   `</div>`;
+
+  // ---- Guides ----
+  const words=String(name).toLowerCase().split(/\W+/).filter(w=>w.length>=4);
+  const l2t=tally(cases,s=>s.l2), l2total=cases.length;
+  const topL2=new Set(l2t.filter((x,i)=>i<3||(l2total&&x[1]/l2total>=0.15)).map(x=>x[0]));
+  const l2Words=[...topL2].flatMap(l=>String(l).toLowerCase().split(/\W+/).filter(w=>w.length>=4));
+  const cardScores=DB.cards.map(c=>{
+    let score=0;
+    if((CARD_L2[c.id]||[]).some(l=>topL2.has(l)))score+=3;
+    const hay=(c.title+' '+c.keywords).toLowerCase();
+    words.forEach(w=>{if(hay.includes(w))score+=1;});
+    return {type:'card',item:c,score};
+  });
+  const kbScores=(DB.kb||[]).map(k=>{
+    let score=0;
+    const hay=((k.kw||'')+' '+(k.title||'')).toLowerCase();
+    words.forEach(w=>{if(hay.includes(w))score+=2;});
+    l2Words.forEach(w=>{if(hay.includes(w))score+=1;});
+    if((k.mach||[]).includes('All')||(chipOn&&(k.mach||[]).includes(symMach)))score+=1;
+    return {type:'kb',item:k,score};
+  });
+  const guides=[...cardScores,...kbScores].filter(g=>g.score>=2).sort((a,b)=>b.score-a.score).slice(0,8);
+  if(guides.length)html+=`<div class="sys">📘 Guides</div>`+guides.map(g=>g.type==='card'?cardRow(g.item):kbRow(g.item)).join('');
+
+  // ---- Manual ----
+  const errFreq=tally(cases,s=>s.err).slice(0,6).map(x=>String(x[0]).toUpperCase());
+  const codes=[...new Set([...extractCodes(name),...errFreq])].filter(Boolean);
+  let manualHtml='', usedMref=false;
+  codes.forEach(code=>{
+    const mc=(DB.mcodes||[]).map((m,i)=>({m,i})).filter(x=>(x.m.codes||[]).includes(code));
+    const eh=errHitsForCode(code);
+    const mr=(DB.mref||[]).filter(r=>(r.codes||[]).includes(code));
+    if(mc.length||eh.length||mr.length){
+      manualHtml+=`<div class="sys">🔢 ${esc(code)}</div>`
+        +mc.map(x=>mcodeRow(x.m,x.i)).join('')
+        +eh.map(errHitRow).join('')
+        +mr.map(mrefRow).join('');
+      if(mr.length)usedMref=true;
+    }
+  });
+  const diagRows=(DB.mref||[]).filter(r=>r.p==='Diagnose'&&words.some(w=>String(r.t||'').toLowerCase().includes(w)))
+    .filter(r=>!chipOn||MANUAL_FAM[r.m]===symMach).slice(0,5);
+  if(diagRows.length){ manualHtml+=`<div class="sys">📖 Related manual sections</div>`+diagRows.map(mrefRow).join(''); usedMref=true; }
+  if(usedMref)manualHtml+=`<div class="hint">Manual text stays in Notion — needs signal + Notion login.</div>`;
+  if(manualHtml)html+=`<div class="sys">📖 Manual</div>`+manualHtml;
+
+  // ---- What fixed it before ----
+  const partsT=tally(cases,s=>s.parts).slice(0,8), errT=tally(cases,s=>s.err).slice(0,8);
+  let fixedHtml='';
+  if(l2t.length)fixedHtml+=`<div class="dim" style="margin:2px 0 2px">Problem type</div>`+barList(l2t,'var(--acc)',8);
+  if(partsT.length)fixedHtml+=`<div class="dim" style="margin:10px 0 2px">Top parts used</div>`+barList(partsT,'var(--g2)',8);
+  if(errT.length)fixedHtml+=`<div class="dim" style="margin:10px 0 2px">Top error codes</div>`+barList(errT,'var(--warn)',8);
+  if(fixedHtml)html+=`<div class="sys">🔧 What fixed it before</div><div class="card">${fixedHtml}</div>`;
+
+  // ---- Past cases ----
+  const sorted=cases.slice().sort((a,b)=>b.d.localeCompare(a.d));
+  const shown=sorted.slice(0,symPageN);
+  html+=`<div class="sys">🧾 Past cases (${cases.length})</div>`
+    +shown.map(s=>(s.rv==='Revisited'?'<span class="tag warn">↩ Revisit</span>':'')+svcLine(s)).join('')
+    +(sorted.length>symPageN?`<button class="btn sec sm" onclick="symShowMore()">Show more</button>`:'')
+    +`<div class="hint">Actions are as typed in the CM record — verify before applying.</div>`;
+
+  // ---- Related symptoms ----
+  const rel={};
+  allCases.forEach(s=>{
+    const syms=[...new Set((s.sym||[]).map(canonSym).filter(Boolean))];
+    if(!syms.includes(name))return;
+    syms.forEach(o=>{if(o!==name)rel[o]=(rel[o]||0)+1;});
+  });
+  const relTop=Object.entries(rel).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  if(relTop.length)html+=`<div class="sys">Related symptoms</div><div class="chips">`+
+    relTop.map(([o])=>`<button class="chip" onclick="go('sym',${JSON.stringify(o).replace(/"/g,'&quot;')})">${esc(o)}</button>`).join('')+`</div>`;
+
+  V().innerHTML=html;
+}
+
+// --- KB guide page (route 'kb') ---
+function kb(id){
+  const k=(DB.kb||[]).find(x=>x.id===id); if(!k){go('fix');return}
+  V().innerHTML=`<span class="back" onclick="goBack()">← Troubleshoot</span>
+   <h2>📘 ${esc(k.title)}</h2>
+   <div class="dim" style="margin:4px 0 10px">${esc(k.cat||'')} · ${esc((k.mach||[]).join(', '))}</div>
+   <div class="card md">${md(k.md)}</div>
+   <div class="hint">From the SOP hub in Notion — as of ${esc(DB.asof)} · ${notionLink(k.url)}</div>`;
+}
+
+// --- Manual error-code card page (route 'mcode', arg = index into DB.mcodes) ---
+function mcode(idx){
+  const m=(DB.mcodes||[])[idx]; if(!m){go('fix');return}
+  V().innerHTML=`<span class="back" onclick="goBack()">← Troubleshoot</span>
+   <h2>📖 ${esc(m.t||'')}</h2>
+   <div class="dim" style="margin:4px 0 10px">${esc(manualLabel(m.m))}${m.no?(' · §'+esc(m.no)):''}${m.pages?(' · p.'+esc(m.pages)):''}</div>
+   <div>${(m.codes||[]).map(c=>`<span class="tag warn">⚠ ${esc(c)}</span>`).join('')}</div>
+   <div class="card md">${md(m.md)}</div>
+   <div class="hint">Transcribed from the official service manual — figures not included${m.fig?(' ('+esc(m.fig)+')'):''}; verify against the unit. · ${notionLink(m.url)}</div>`;
 }
 
 // ---------- Parts ----------
