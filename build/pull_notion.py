@@ -34,6 +34,7 @@ from datetime import datetime, timezone, timedelta
 DB_ITEM_MASTER = "c508cead-7e1b-4990-8c30-a95623287c12"   # Fujifilm Item Master List
 DB_CM          = "2f6a9088-5bbb-803f-8956-c0715dcd20de"   # CM_Service_Record_DataBase
 DB_PM          = "35aa9088-5bbb-80ff-9385-f3b29436cdd6"   # PM Master List
+DB_SITE_REMARKS = "d5a1f113-0716-49a4-adf8-54f3efa5ec6d"  # 📝 Site Remarks (v5.11; written by the Worker /site-remark)
 
 # Solution Cards (id slug MUST match CARD_L2 keys in index.html)
 CARDS = [
@@ -504,6 +505,33 @@ def build_items():
         print(f"  WARNING: non-standard cluster name(s) in use: {bad}")
     print(f"  {len(sectors)} sites mapped to clusters")
     return items, sectors
+
+def build_site_remarks():
+    """{site: {"r": remark, "by": updated-by, "d": date}} from the Site Remarks DB.
+    Must NEVER fail the build: the DB may not be shared with the integration yet
+    (api() exits on 404), so any error -- including SystemExit -- degrades to {}.
+    A remark that trips a HARD leak marker is dropped (with a warning) rather
+    than letting leak_check() abort the whole nightly build."""
+    try:
+        out, dropped = {}, 0
+        for r in query_db(DB_SITE_REMARKS):
+            p = r["properties"]
+            site = str(prop(p, "Site") or "").strip()
+            if not site: continue
+            rem = str(prop(p, "Remarks") or "").strip()
+            low = rem.lower()
+            # HARD and SOFT markers both: the worker bundle must carry no credentials.
+            if any(m.lower() in low for m in HARD_MARKERS + SOFT_MARKERS):
+                dropped += 1; continue
+            out[site] = {"r": rem, "by": str(prop(p, "Updated By") or "").strip(),
+                         "d": str(prop(p, "Updated") or "")[:10]}
+        if dropped:
+            print(f"  WARNING: {dropped} site remark(s) withheld (credential marker) - edit them in Notion")
+        print(f"  {len(out)} site remarks")
+        return out
+    except (Exception, SystemExit) as e:
+        print(f"  WARNING: Site Remarks not loaded ({e}) \u2014 share the DB with the integration")
+        return {}
 
 def build_svc():
     print("Pulling CM records ...")
@@ -1060,6 +1088,7 @@ def main():
         "procedures": build_procedures(),
         "kb": kb, "mref": mref, "mcodes": mcodes,
         "kbstatus": {"kb": kbstat, "manuals": manual_stat},
+        "siteremarks": build_site_remarks(),
     }
     blob = json.dumps(bundle, ensure_ascii=False, separators=(",", ":"))
     print(f"Bundle: {len(blob)/1e6:.2f} MB")

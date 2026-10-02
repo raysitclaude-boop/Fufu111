@@ -35,7 +35,7 @@ SRC = "data/bundle.json"
 # free-text 'Actions Taken' is stripped out, because it can contain credentials
 # or WiFi keys R typed in, which the shared-password boundary keeps out of the
 # worker's offline file.
-WORKER_KEYS = ["asof", "items", "sectors", "pm", "svc", "parts"]
+WORKER_KEYS = ["asof", "items", "sectors", "pm", "svc", "parts", "siteremarks"]
 # Hard guard: admin-only keys (which may now carry credentials in `kb`) must never
 # be allowlisted for the worker bundle.
 _ADMIN_ONLY = {"kb", "cards", "errors", "procedures", "mref", "mcodes", "kbstatus"}
