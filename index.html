@@ -97,6 +97,7 @@ details.proc .body{padding:6px 14px 14px}
 .selbar{position:sticky;top:calc(44px + env(safe-area-inset-top));z-index:4;background:var(--bg);padding:6px 0}
 .grpcount{font-size:11.5px;color:var(--dim);font-weight:400}
 .rank1 .n{color:#ffd54f!important}
+.mtx td{white-space:nowrap;line-height:1.25;padding:4px 7px}.mtx td.hc>div:first-child{color:#ffd54f;font-weight:700}.mtx td.hp>div:last-child{color:var(--g2);font-weight:700}.mtx tr.totrow td{border-top:1px solid var(--line)}
 .reptbl td,.reptbl th{font-variant-numeric:tabular-nums}
 .reptbl td:not(:first-child),.reptbl th:not(:first-child){text-align:right}
 @media print{
@@ -273,7 +274,7 @@ async function unlock(){
   boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-const APP_VER='v5.10';
+const APP_VER='v5.11';
 // --- HA cluster names -------------------------------------------------------
 // The official HA list has 6 clusters; Hong Kong East and Hong Kong West were
 // merged into Hong Kong Island. Old bundles cached on a phone may still carry
@@ -322,7 +323,7 @@ function siteAbbr(name){
 function boot(){
   $('gate').style.display='none';
   ['items','svc','pm','parts','cards','errors','kb','mref','mcodes'].forEach(k=>DB[k]=DB[k]||[]);
-  DB.sectors=DB.sectors||{}; DB.procedures=DB.procedures||{}; DB.kbstatus=DB.kbstatus||{};
+  DB.sectors=DB.sectors||{}; DB.procedures=DB.procedures||{}; DB.kbstatus=DB.kbstatus||{}; DB.siteremarks=DB.siteremarks||{};   // old bundles have no siteremarks
   SYM_IDX=null; SYM_BY_NAME=null; SYM_UNTAGGED=0; MCODE_BY_CODE=null;   // old bundles won't have kb/mref/mcodes/kbstatus until the next nightly build
   ROLE=DB.role||'admin';
   // normalise engineer names once, so old bundles are fixed without a rebuild
@@ -358,6 +359,7 @@ function svcLine(s){
 function go(p,arg){
   if(ROLE==='worker'&&['fix','analysis','card','part','sym','kb','mcode'].includes(p))p='pm';
   if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox','assetnet','assetinfo','sym','kb','mcode'].includes(p))PREV=route;
+  if(p!=='site'||route.p!=='site'||route.arg!==arg)siteMode=null;
   route={p,arg}; render(); window.scrollTo(0,0);
 }
 function render(){
@@ -385,11 +387,12 @@ function drawSites(){
     }
     (sset[s]=sset[s]||{n:0,cl}).n++;
   });
-  const names=Object.keys(sset).filter(n=>n.toLowerCase().includes(q)||siteAbbr(n).some(a=>a.toLowerCase().includes(q))).sort();
+  // v5.11: busiest sites first (active-item count desc), ties by name.
+  const names=Object.keys(sset).filter(n=>n.toLowerCase().includes(q)||siteAbbr(n).some(a=>a.toLowerCase().includes(q))).sort((a,b)=>sset[b].n-sset[a].n||a.localeCompare(b));
   let html='';
   if(siteFilter==='HA'){
     const bySec={};
-    names.forEach(n=>{const sec=SECTOR(DB.sectors[n]);(bySec[sec]=bySec[sec]||[]).push(n)});
+    names.forEach(n=>{const sec=SECTOR(DB.sectors[n]);(bySec[sec]=bySec[sec]||[]).push(n)});   // names already sorted → sites within a cluster stay count-desc
     // Canonical HA cluster names (official HA list, 6 clusters since HK East+West merged).
     // Any sector not in this list is still rendered at the end — never silently dropped.
     const order=['Hong Kong Island','Kowloon Central','Kowloon East','Kowloon West','New Territories East','New Territories West'];
@@ -402,25 +405,143 @@ function drawSites(){
   }
   $('list').innerHTML=html||'<div class=dim style=margin-top:10px>No sites match.</div>';
 }
-function siteRow(n,c){const ab=siteAbbr(n)[0];return `<div class="card click" onclick="go('site',${JSON.stringify(n).replace(/"/g,'&quot;')})"><div class="row"><h3>${esc(n)}${ab?` <span class="tag acc">${esc(ab)}</span>`:''}</h3><span class="dim">${c} items</span></div>${DB.sectors[n]?`<div class="dim">🗺️ ${esc(SECTOR(DB.sectors[n]))}</div>`:''}</div>`}
+function siteRow(n,c){const ab=siteAbbr(n)[0];const hasR=!!((DB.siteremarks||{})[n]&&DB.siteremarks[n].r);return `<div class="card click" onclick="go('site',${JSON.stringify(n).replace(/"/g,'&quot;')})"><div class="row"><h3>${esc(n)}${ab?` <span class="tag acc">${esc(ab)}</span>`:''}${hasR?' <span title="Has site remarks">📝</span>':''}</h3><span class="dim">${c} items</span></div>${DB.sectors[n]?`<div class="dim">🗺️ ${esc(SECTOR(DB.sectors[n]))}</div>`:''}</div>`}
+
+// v5.11: site page state. siteMode = {name, m:'rmk'|'bulk'} — which edit surface is open.
+let siteMode=null, siteBulkRows=[];
+const sysOptions=name=>[...new Set(DB.items.filter(x=>(x.site||'(no site)')===name).map(x=>x.sysno).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+const sysDatalist=(id,name)=>`<datalist id="${id}">${sysOptions(name).map(v=>`<option value="${esc(v)}">`).join('')}</datalist>`;
+const todayISO=()=>new Date().toISOString().slice(0,10);
+function siteRmkCard(name){
+  if(name==='(no site)')return '';
+  const r=(DB.siteremarks||{})[name], txt=(r&&r.r)||'';
+  if(siteMode&&siteMode.name===name&&siteMode.m==='rmk'){
+    const need=needIdentity();
+    if(need==='setkey'||need==='setname')return identityCard();
+    if(need)return `<div class="card"><div class="dim">${esc(need)}</div></div>`;
+    return `<div class="card"><h3>📝 Site remarks</h3>
+      <div class="fld"><textarea id="f_srmk" maxlength="2000" placeholder="e.g. enter via Block B lift; book the room with the radiographer">${esc(txt)}</textarea></div>
+      <div class="hint">Visible to every engineer. No passwords, patient or contact-person details.</div>
+      <button class="btn sm" onclick="saveSiteRemark(${attr(name)})">Save (queues if offline)</button><button class="btn sec sm" onclick="siteMode=null;site(${attr(name)})">Cancel</button></div>`;
+  }
+  return `<div class="card"><div class="row"><h3>📝 Site remarks</h3><button class="btn sec sm" style="margin:0" onclick="siteMode={name:${attr(name)},m:'rmk'};site(${attr(name)})">Edit</button></div>
+    ${txt?`<div style="white-space:pre-wrap">${esc(txt)}</div><div class="dim">updated ${esc(r.d||'?')}${r.by?(' · '+esc(r.by)):''}</div>`:'<div class="dim">No remarks yet.</div>'}</div>`;
+}
+function saveSiteRemark(name){
+  if(needIdentity()){render();return}
+  const text=($('f_srmk').value||'').trim().slice(0,2000);
+  enqueue('POST','/site-remark',{site:name,remark:text},'Site remark '+name);
+  DB.siteremarks=DB.siteremarks||{}; DB.siteremarks[name]={r:text,by:myName(),d:todayISO()};
+  siteMode=null; site(name);
+}
+function siteBulk(name,act){
+  const need=needIdentity();
+  if(need==='setkey'||need==='setname')return identityCard();
+  if(need)return `<div class="card"><div class="dim">${esc(need)}</div></div>`;
+  siteBulkRows=act.slice().sort((a,b)=>(!a.sysno-!b.sysno)||String(a.sysno||'').localeCompare(String(b.sysno||''),undefined,{numeric:true})||String(a.sn).localeCompare(String(b.sn)));
+  return `<div class="hint">Edit the System # of each active item, then Save. Only changed rows are written; groups re-form afterwards. Leave blank to clear.</div>
+   ${sysDatalist('syslist',name)}
+   ${siteBulkRows.map((i,k)=>`<div class="card"><div class="row"><h3>${esc(i.sn)}</h3><span class="dim">${esc(i.model||i.type||'')}</span></div>
+     <div class="fld" style="margin:6px 0 0"><input type="text" class="bsys" data-k="${k}" list="syslist" maxlength="60" value="${esc(i.sysno||'')}" placeholder="System #" oninput="siteSysCount()" autocorrect="off">${i.pid?'':'<div class="hint">Predates item-info updates — run the nightly build before editing.</div>'}</div></div>`).join('')}
+   <div class="selbar" style="top:auto;bottom:calc(60px + env(safe-area-inset-bottom))"><button class="btn" id="bsave" onclick="saveSiteSys(${attr(name)})">Save changes (<span id="bsn">0</span>)</button>
+     <button class="btn sec" onclick="siteMode=null;site(${attr(name)})">Cancel</button></div>`;
+}
+const bulkChanged=()=>[...document.querySelectorAll('#view input.bsys')].map(inp=>({i:siteBulkRows[+inp.dataset.k],v:inp.value.trim().slice(0,60)})).filter(x=>x.i&&x.v!==(x.i.sysno||''));
+function siteSysCount(){const n=$('bsn');if(n)n.textContent=bulkChanged().length;}
+function enqueueMany(jobs){   // one write + one flush: enqueue() in a loop would let the first flush overwrite the rest
+  if(!jobs.length)return;
+  const box=getOutbox(), ts=new Date().toISOString();
+  jobs.forEach(j=>box.push({uuid:uid(),method:j.method,path:j.path,payload:j.payload,label:j.label,st:'queued',err:'',ts}));
+  setOutbox(box); flushOutbox();
+}
+function saveSiteSys(name){
+  if(needIdentity()){render();return}
+  const ch=bulkChanged();
+  if(!ch.length){alert('Nothing changed.');return}
+  const withPid=ch.filter(x=>x.i.pid), nopid=ch.length-withPid.length;
+  enqueueMany(withPid.map(({i,v})=>({method:'PATCH',path:'/asset-info/'+i.pid,payload:{set:{sysno:v}},label:`System # ${i.site||''} ${i.sn}: ${v||'(cleared)'}`})));
+  withPid.forEach(({i,v})=>{i.sysno=v;i.infoby=myName();i.infod=todayISO();});
+  siteMode=null; site(name);
+  if(nopid)alert(`${nopid} item(s) predate item-info updates — run the nightly build`);
+}
 function site(name){
+  if(siteMode&&siteMode.name!==name)siteMode=null;
   const items=DB.items.filter(i=>(i.site||'(no site)')===name);
   const act=items.filter(i=>i.status!=='Retired'), ret=items.filter(i=>i.status==='Retired');
   const bySys={}; act.forEach(i=>{const k=i.sysno||'— no system # —';(bySys[k]=bySys[k]||[]).push(i)});
   const keys=Object.keys(bySys).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const bulk=siteMode&&siteMode.name===name&&siteMode.m==='bulk';
   V().innerHTML=`<span class="back" onclick="go('sites')">← Sites</span><h2>${esc(name)}</h2>
    <div class="dim">${DB.sectors[name]?('🗺️ '+esc(SECTOR(DB.sectors[name]))+' · '):''}${act.length} active · ${ret.length} retired</div>
+   ${siteRmkCard(name)}
+   ${bulk?siteBulk(name,act)
+     :`${act.length?`<button class="btn sec sm" style="margin:8px 0 0" onclick="siteMode={name:${attr(name)},m:'bulk'};site(${attr(name)})">✏️ Edit system #</button>`:''}
    ${keys.map(k=>`<div class="sys">${esc(k)}</div>`+bySys[k].map(i=>itemLine(i,false)).join('')).join('')}
-   ${ret.length?`<div class="sys" style="border-color:var(--bad)">Retired / replaced</div>`+ret.map(i=>itemLine(i,false)).join(''):''}`;
+   ${ret.length?`<div class="sys" style="border-color:var(--bad)">Retired / replaced</div>`+ret.map(i=>itemLine(i,false)).join(''):''}`}`;
+  if(bulk)siteSysCount();
 }
 
 // ---------- Serial ----------
+// v5.11: with nothing (or <3 characters) typed, show a landing dashboard built from DB.items.
+const FAM_LBL={goplus:'Go Plus',nano:'Nano',smart:'FDR Smart',mammo:'Mammo',devo2:'D-evo 2 detector',devo3:'D-evo 3 detector',retrofit:'Retrofit',console:'Console/PC',printer:'Printer',other:'Other'};
+const FAM_MAIN=['goplus','nano','smart','mammo','devo2','devo3'], FAM_MINOR=['retrofit','console','printer','other'];
+// One family per item, first match wins.
+function itemFam(i){
+  const m=(i.model||'').toLowerCase(), t=i.type||'';
+  if(/go\s*(\+|plus)/.test(m)&&!/flex/.test(m))return 'goplus';
+  if(/nano/.test(m)&&t!=='Detector/Panel')return 'nano';
+  if(/fdr\s*smart|fgxr/.test(m))return 'smart';
+  if(/mammo|amulet/.test(m)&&t!=='Console/PC')return 'mammo';
+  if(/d-?evo\s*2|dr-id\s*121/.test(m))return 'devo2';
+  if(/d-?evo\s*3|dr-id\s*18/.test(m))return 'devo3';
+  if(/retrofit/.test(m))return 'retrofit';
+  if(t==='Console/PC')return 'console';
+  if(t==='Printer'||/drypix/.test(m))return 'printer';
+  return 'other';
+}
+const DQ_LBL={nanodet:'Machine Type “Nano” but Asset Type Detector/Panel (not counted as Nano machines)',devomach:'D-evo detectors tagged Asset Type Machine / Console',nomodel:'Active items with a blank model'};
+function serialDQ(){
+  const act=activeItems();
+  return {
+    nanodet:act.filter(i=>/nano/i.test(i.model||'')&&i.type==='Detector/Panel'),
+    devomach:act.filter(i=>['devo2','devo3'].includes(itemFam(i))&&['Machine','Console/PC'].includes(i.type||'')),
+    nomodel:act.filter(i=>!String(i.model||'').trim())
+  };
+}
+let serFam=null;
+const bySiteSys=(a,b)=>String(a.site||'').localeCompare(String(b.site||''))||String(a.sysno||'').localeCompare(String(b.sysno||''),undefined,{numeric:true})||String(a.sn).localeCompare(String(b.sn));
+function serialDash(){
+  const act=activeItems(), fam={};
+  act.forEach(i=>{const f=itemFam(i);fam[f]=(fam[f]||0)+1});
+  const sitesN=new Set(act.map(i=>i.site).filter(Boolean)).size;
+  const kp=[[DB.items.length,'Total items'],[act.length,'Active'],[DB.items.filter(i=>i.status==='Retired').length,'Retired'],
+    [DB.items.filter(i=>i.status==='Not confirmed').length,'Not confirmed'],[sitesN,'Sites'],[act.filter(i=>!i.sysno).length,'Active, no System #']];
+  const tile=(k,dim)=>`<div class="kpi click" data-fam="${k}" style="${dim?'opacity:.72;':''}" onclick="serFam='${k}';serialSearch()"><div class="n${dim?'':' g'}">${fam[k]||0}</div><div class="l">${esc(FAM_LBL[k])}</div></div>`;
+  const dq=serialDQ(), dqs=Object.keys(dq).filter(k=>dq[k].length);
+  return `<div class="kpis" style="grid-template-columns:repeat(3,1fr)">${kp.map(([n,l])=>`<div class="kpi"><div class="n">${n}</div><div class="l">${esc(l)}</div></div>`).join('')}</div>
+   <div class="sys">Active machines by family</div>
+   <div class="kpis" style="grid-template-columns:repeat(3,1fr)">${FAM_MAIN.map(k=>tile(k,false)).join('')}</div>
+   <div class="kpis" style="grid-template-columns:repeat(4,1fr)">${FAM_MINOR.map(k=>tile(k,true)).join('')}</div>
+   ${dqs.length?`<div class="hint" style="margin-top:8px">Data quality: ${dqs.map(k=>`<span class="click" style="color:var(--warn);text-decoration:underline" data-dq="${k}" onclick="serFam='dq:${k}';serialSearch()">${dq[k].length} · ${esc(DQ_LBL[k])}</span>`).join(' &nbsp;|&nbsp; ')}</div>`:''}
+   <details class="proc"><summary><span>How counted</span></summary><div class="body"><div class="hint">Only active items (status not Retired) are counted, each into exactly one family decided by its model and asset type — the first rule that matches wins: Go Plus (not Go Flex), Nano (not a bare detector), FDR Smart / FGXR, Mammo / Amulet (not a console), D-evo 2 (DR-ID 121), D-evo 3 (DR-ID 18xx), then Retrofit, Console/PC, Printer, Other.</div></div></details>
+   <div class="hint">Search across ${DB.items.length} items above. The unit label is authoritative — report mismatches.</div>`;
+}
+function serialFamList(key){
+  const dq=key.startsWith('dq:'), k=dq?key.slice(3):key;
+  const rows=(dq?(serialDQ()[k]||[]):activeItems().filter(i=>itemFam(i)===k)).slice().sort(bySiteSys);
+  const title=dq?DQ_LBL[k]:FAM_LBL[k];
+  const bySite={}; rows.forEach(i=>{const s=i.site||'(no site)';(bySite[s]=bySite[s]||[]).push(i)});
+  return `<span class="back" onclick="serFam=null;serialSearch()">← Dashboard</span>
+   <h2 style="font-size:16px;margin:6px 0">${esc(title||'Items')} <span class="dim">· ${rows.length}</span></h2>
+   ${Object.keys(bySite).map(s=>`<div class="sys">${esc(s)} <span class="dim">· ${bySite[s].length}</span></div>`+bySite[s].map(i=>itemLine(i,true)).join('')).join('')||'<div class=dim>No items.</div>'}`;
+}
 function serial(){
-  V().innerHTML=`<input type=search id=q placeholder="Type any part of a serial number…" oninput="serialSearch()"><div id=list class=dim style="margin-top:10px">Search across ${DB.items.length} items. The unit label is authoritative — report mismatches.</div>`;
+  V().innerHTML=`<input type=search id=q placeholder="Type any part of a serial number…" oninput="serialSearch()"><div id=list style="margin-top:10px"></div>`;
+  serialSearch();
 }
 function serialSearch(){
   const q=$('q').value.trim().toUpperCase();
-  if(q.length<3){$('list').innerHTML='<div class=dim style=margin-top:10px>Type at least 3 characters.</div>';return}
+  if(q.length<3){$('list').innerHTML=serFam?serialFamList(serFam):serialDash();return}
   const hits=DB.items.filter(i=>i.sn.toUpperCase().includes(q)).slice(0,30);
   $('list').innerHTML=hits.length?hits.map(i=>itemLine(i,true)).join(''):`<div class=dim style=margin-top:10px>No match. Check 1↔I and 0↔O — typos exist. If the unit in front of you really isn't listed, report it:</div><button class="btn warn" onclick="go('mismatch','')">🔁 Report serial mismatch</button>`;
 }
@@ -434,7 +555,7 @@ function item(sn){
    <div class="dim">${esc(i.model||'')} · ${esc(i.type||'')} ${i.sysno?('· System <b style=color:var(--acc)>'+esc(i.sysno)+'</b>'):''}</div>
    <div class="dim">${esc(i.site||'')} ${i.loc?('· '+esc(i.loc)):''}</div>${i.addr?`<div class="hint">${esc(i.addr)}</div>`:''}
    ${i.remark?`<div class="hint">📝 ${esc(i.remark)}</div>`:''}${i.infod?`<div class="dim" style="margin-top:2px">✏️ info updated ${esc(i.infod)}${i.infoby?(' · '+esc(i.infoby)):''}</div>`:''}
-   <button class="btn sm" style="margin-top:8px" onclick="go('assetinfo',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">✏️ Update item info (model / status / remark)</button>
+   <button class="btn sm" style="margin-top:8px" onclick="go('assetinfo',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">✏️ Update item info (system # / model / status / remark)</button>
    <button class="btn sec sm" onclick="go('mismatch',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">🔁 Serial on the unit is different? Report it</button></div>
    ${netEligible(i)?netCard(i):''}
    ${set.length?`<div class="sys">Same system set (${esc(i.sysno)})</div>`+set.map(x=>itemLine(x,false)).join(''):''}
@@ -504,7 +625,7 @@ function submitNet(sn){
   i.mcver=mc; i.apl=apl; i.ip=ip; i.subnet=sub; i.gw=gw; i.login=login; i.pw=pw; i.remark=rmk; i.netby=myName(); i.netd=new Date().toISOString().slice(0,10);
   go('item',sn);
 }
-// --- Update item info (model / status / remark) — direct edit, any item -------
+// --- Update item info (system # / model / status / remark) — direct edit, any item -------
 const ITEM_STATUS=['Active','Retired','Relocated','Not confirmed'];
 function assetinfo(sn){
   const need=needIdentity();
@@ -512,9 +633,10 @@ function assetinfo(sn){
   if(need){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><div class="card"><div class="dim">${esc(need)}</div></div>`;return}
   const i=DB.items.find(x=>x.sn===sn); if(!i){go('serial');return}
   const models=[...new Set(DB.items.map(x=>x.model).filter(Boolean))].sort();
-  V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>✏️ Update item info</h2>
-   <div class="hint">Writes Model / Status / Remark straight onto this asset in the Item Master, stamped with your name and today's date. (Serial changes still go through "Report" — this doesn't change the serial.)</div>
+  V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>✏️ Update item info (system # / model / status / remark)</h2>
+   <div class="hint">Writes System # / Model / Status / Remark straight onto this asset in the Item Master, stamped with your name and today's date. (Serial changes still go through "Report" — this doesn't change the serial.)</div>
    <div class="card"><h3>${esc(i.sn)}</h3><div class="dim">${esc(i.site||'')} ${i.sysno?('· System '+esc(i.sysno)):''}</div></div>
+   <div class="fld"><label>System #</label><input type="text" id="f_sys" list="syslist" maxlength="60" value="${esc(i.sysno||'')}" placeholder="e.g. #3" autocorrect="off">${sysDatalist('syslist',i.site||'(no site)')}<div class="hint">e.g. #3, #DX5, #Rehab — groups items on the site page</div></div>
    <div class="fld"><label>Model (machine type)</label><input type="text" id="f_model" list="modellist" value="${esc(i.model||'')}" autocorrect="off"><datalist id="modellist">${models.map(m=>`<option value="${esc(m)}">`).join('')}</datalist></div>
    <div class="fld"><label>Status</label>
      <div class="chips">${ITEM_STATUS.map(s=>`<button type="button" class="chip${((infoStatus||i.status||'Active')===s)?' on':''}" onclick="infoStatus='${s}';assetinfo(${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">${s}</button>`).join('')}</div></div>
@@ -526,11 +648,14 @@ function submitInfo(sn){
   const i=DB.items.find(x=>x.sn===sn); if(!i)return;
   if(!i.pid){alert('This asset predates the item-info update — run the nightly build once, then try again.');return}
   const model=$('f_model').value.trim(), status=infoStatus||i.status||'Active', remark=$('f_rmk').value.trim();
+  const sysno=($('f_sys').value||'').trim().slice(0,60), sysChanged=sysno!==(i.sysno||'');
   if(!ITEM_STATUS.includes(status)){alert('Pick a status.');return}
   const set={status,remark}; if(model)set.model=model;
-  enqueue('PATCH','/asset-info/'+i.pid,set,`Info ${i.site} ${sn}: ${model||i.model} / ${status}`);
+  if(sysChanged)set.sysno=sysno;   // only when it differs ('' = clear)
+  // The Worker reads body.set — the bare object used to be sent here, which it ignored (no-op).
+  enqueue('PATCH','/asset-info/'+i.pid,{set},`Info ${i.site} ${sn}: ${model||i.model} / ${status}${sysChanged?` / sys ${sysno||'(cleared)'}`:''}`);
   // optimistic local update
-  if(model)i.model=model; i.status=status; i.remark=remark; i.infoby=myName(); i.infod=new Date().toISOString().slice(0,10);
+  if(model)i.model=model; i.status=status; i.remark=remark; if(sysChanged)i.sysno=sysno; i.infoby=myName(); i.infod=new Date().toISOString().slice(0,10);
   infoStatus=null; go('item',sn);
 }
 
@@ -1190,12 +1315,13 @@ function tickPM(ids){
   const need=needIdentity();
   if(need==='setkey'||need==='setname'){$('pmbody').innerHTML=identityCard()+'<div class="hint">One-time setup — then tick again.</div>';return}
   if(need){alert(need);return}
-  const tk=getTicks(), name=myName();
+  const tk=getTicks(), name=myName(), jobs=[];
   ids.forEach(id=>{
     const x=DB.pm.find(r=>r.id===id); if(!x)return;
     tk[id]={by:name,ts:Date.now()};
-    enqueue('PATCH','/pm/'+id,{set:{status:'Completed',checked:[name]}},`PM done ${x.site} ${x.sn||x.item||''}`);
+    jobs.push({method:'PATCH',path:'/pm/'+id,payload:{set:{status:'Completed',checked:[name]}},label:`PM done ${x.site} ${x.sn||x.item||''}`});
   });
+  enqueueMany(jobs);   // one write + one flush (a per-id enqueue() loop raced the first flush and lost jobs 2..n)
   setTicks(tk); pmSel.clear(); if(route.p==='pm')pm();
 }
 
@@ -1237,26 +1363,38 @@ async function flushOutbox(force){
   if(flushing||!workerReady()||(!force&&!navigator.onLine))return; flushing=true;
   try{
     let box=getOutbox();
-    for(const j of box.filter(x=>x.st!=='confirmed')){
+    // Persist by MERGING into the live outbox, never by writing this (possibly stale) snapshot back:
+    // jobs enqueued while a fetch was in flight must survive. Entries are matched on the immutable j.uuid.
+    const persist=j=>{const cur=getOutbox();const k=cur.findIndex(x=>x.uuid===j.uuid);if(k>=0)cur[k]=j;setOutbox(cur);};
+    for(const j of box.filter(x=>x.st!=='confirmed'&&!x.hold)){   // held jobs (out-of-date Worker) wait for an explicit Retry
       try{
         const r=await fetch(WORKER_URL+j.path,{method:j.method,
           headers:{'Content-Type':'application/json','X-Write-Key':writeKey()},
-          body:JSON.stringify({...j.payload,uuid:j.uuid,by:myName()})});
+          body:JSON.stringify({...j.payload,uuid:j.rid||j.uuid,by:myName()})});   // j.rid = fresh idempotency key after an out-of-date-Worker failure; j.uuid (the outbox key) never changes
         const d=await r.json().catch(()=>({}));
-        if(d.ok){j.st='confirmed';j.err='';j.id=d.id;}
+        if(d.ok){
+          // v5.11: an out-of-date Worker ignores System # but still answers ok. The new Worker lists the
+          // Notion fields it wrote — if a System # job comes back without it, don't call it saved.
+          if(/^\/asset-info\//.test(j.path)&&j.payload&&j.payload.set&&j.payload.set.sysno!==undefined&&!(Array.isArray(d.fields)&&d.fields.includes('System #'))){
+            j.st='failed';j.err='Worker out of date — System # NOT saved (other fields were). Ask R to update the Cloudflare Worker, then tap Retry.';j.code=r.status;
+            j.hold=true;   // never auto-resent (timer / online / force flushes skip it); retryJob() clears the hold and issues a fresh rid
+          }else{j.st='confirmed';j.err='';j.id=d.id;}
+        }
         // "Nothing to update" / "Nothing to record" is the Worker saying the
         // patch would change nothing. That is a NO-OP, not a failure — but it
         // came back as a 4xx, so the job parked as 'failed' and sat in the
         // queue for ever showing a scary error. Nothing to do means done.
         else if(NOOP_RE.test(d.error||'')){j.st='confirmed';j.err='';j.noop=true;}
+        // v5.11: /site-remark on a Worker that doesn't have the route yet — stay queued, retry on the timer.
+        else if(j.path==='/site-remark'&&r.status===404&&/unknown route/i.test(d.error||'')){j.st='queued';j.err='Worker not updated yet for this feature — will retry automatically';j.code=404;}
         else{
           j.st=(r.status>=500||RETRYABLE.has(r.status))?'queued':'failed';
           j.err=d.error||('HTTP '+r.status);
           j.code=r.status;
         }
-      }catch(e){ j.st='queued'; j.err='offline / network'; setOutbox(box); break; }
+      }catch(e){ j.st='queued'; j.err='offline / network'; persist(j); break; }
       j.tries=(j.tries||0)+1;
-      setOutbox(box);            // persist after every job, including the break above
+      persist(j);                // persist after every job (merge), including the break above
     }
     // drop confirmed entries older than 3 days
     box=getOutbox().filter(x=>x.st!=='confirmed'||(Date.now()-new Date(x.ts))<3*86400e3);
@@ -1443,7 +1581,8 @@ function ageLabel(j){const h=jobAgeMs(j)/3600e3;
   if(h<1)return Math.max(1,Math.round(h*60))+'m old';
   if(h<48)return Math.round(h)+'h old';
   return Math.round(h/24)+'d old';}
-function retryJob(u){const b=getOutbox();const j=b.find(x=>x.uuid===u);if(j){j.st='queued';j.err='';setOutbox(b);flushOutbox(true);}render();}
+function retryJob(u){const b=getOutbox();const j=b.find(x=>x.uuid===u);if(j){if(j.hold){j.hold=false;j.rid=uid();}   // the old Worker cached the previous idempotency key's reply for 7 days — resend with a fresh one
+  j.st='queued';j.err='';setOutbox(b);flushOutbox(true);}render();}
 function dropJob(u){setOutbox(getOutbox().filter(x=>x.uuid!==u));render();}
 
 // ==================================================================
@@ -1481,6 +1620,30 @@ function analysis(){
 }
 // ---- V5: monthly report for management ----
 let repMonth=null;
+// ---- v5.11: shared month logic. anReport() (Report) and anPeople() (monthly matrix) both
+// ---- call these, so the two can never disagree about who did what in a month.
+// Work owed in month m: excludes N/A statuses AND jobs deferred to a later month
+// (they are counted in the month they moved to, not charged twice).
+const pmOwed=(PMR,m)=>PMR.filter(x=>pmBucket(x)===m&&!['N/A','Moved'].includes(pmCatOf(x)));
+const pmMovedRows=(PMR,m)=>PMR.filter(x=>pmBucket(x)===m&&pmCatOf(x)==='Moved');
+const pmDoneN=(PMR,m)=>pmOwed(PMR,m).filter(x=>x.st==='Completed').length;
+const cmCount=m=>DB.svc.filter(s=>(s.d||'').startsWith(m)).length;
+// {name:{a:assigned,c:completed}} — a compound PIC credits every engineer on the row.
+function pmPicStats(PMR,m){
+  const o={};
+  pmOwed(PMR,m).forEach(x=>(x.pic||[]).forEach(p=>{const e=o[p]=o[p]||{a:0,c:0};e.a++;if(x.st==='Completed')e.c++;}));
+  return o;
+}
+// {name:{t:cases credited,solo:cases attended alone}}
+function cmPicStats(m){
+  const o={};
+  DB.svc.filter(s=>(s.d||'').startsWith(m)).forEach(s=>{const p=s.pic||[];p.forEach(n=>{const e=o[n]=o[n]||{t:0,solo:0};e.t++;if(p.length===1)e.solo++;});});
+  return o;
+}
+// check-list coverage of the owed rows `sch` (ck = confirmed by the official check-list, ap = PIC from the check-list, rs = reassigned)
+const pmCoverage=sch=>({ck:sch.filter(x=>x.src==='check').length,ap:sch.filter(x=>x.picsrc==='check').length,rs:sch.filter(x=>(x.apic||[]).length).length});
+// "PM rows exist but none is confirmed by an official check-list" — same test the Report uses (ck===0).
+const pmNoCheck=(PMR,m)=>{const s=pmOwed(PMR,m);return s.length>0&&pmCoverage(s).ck===0;};
 function anReport(){
   const PMR=pmRows();
   const svcMs=DB.svc.map(s=>(s.d||'').slice(0,7)).filter(Boolean);
@@ -1489,23 +1652,22 @@ function anReport(){
   if(!months.length){$('ansec').innerHTML='<div class=dim>No data.</div>';return}
   if(repMonth===null||!months.includes(repMonth)){const cur=new Date().toISOString().slice(0,7);repMonth=months.includes(cur)?cur:months[months.length-1];}
   const idx=months.indexOf(repMonth), last3=months.slice(Math.max(0,idx-2),idx+1);
-  const cmN=m=>DB.svc.filter(s=>(s.d||'').startsWith(m)).length;
+  const cmN=cmCount;
   // Count PM by the monthly schedule it belongs to (release month), matching the
   // PM tab. N/A statuses (Replaced/Excluded/No Need…) are not work owed.
   // Work owed in month m: excludes N/A statuses AND jobs deferred to a later
   // month (they are counted in the month they moved to, not charged twice).
-  const pmSched2=m=>PMR.filter(x=>pmBucket(x)===m&&!['N/A','Moved'].includes(pmCatOf(x)));
-  const pmMoved=m=>PMR.filter(x=>pmBucket(x)===m&&pmCatOf(x)==='Moved');
-  const pmDone=m=>pmSched2(m).filter(x=>x.st==='Completed').length;
+  const pmSched2=m=>pmOwed(PMR,m);
+  const pmMoved=m=>pmMovedRows(PMR,m);
+  const pmDone=m=>pmDoneN(PMR,m);
   const mx=Math.max(...last3.map(m=>Math.max(cmN(m),pmSched2(m).length)),1);
   const chart=last3.map(m=>`
     <div style="margin:9px 0 2px;font-weight:600;font-size:12.5px">${m}${m===repMonth?' ◀':''}</div>
     ${barSimple('CM',cmN(m),mx,'var(--acc)')}
     ${barSimple('PM done',pmDone(m),mx,'var(--g2)')}
     ${barSimple('PM sched',pmSched2(m).length,mx,'#5c6f80')}`).join('');
-  const cmBy={},pmBy={};
-  DB.svc.filter(s=>(s.d||'').startsWith(repMonth)).forEach(s=>(s.pic||[]).forEach(p=>cmBy[p]=(cmBy[p]||0)+1));
-  pmSched2(repMonth).forEach(x=>(x.pic||[]).forEach(p=>{const e=pmBy[p]=pmBy[p]||{a:0,c:0};e.a++;if(x.st==='Completed')e.c++;}));
+  const cmBy={},pmBy=pmPicStats(PMR,repMonth);
+  Object.entries(cmPicStats(repMonth)).forEach(([p,v])=>cmBy[p]=v.t);
   const cmTot=Object.values(cmBy).reduce((a,b)=>a+b,0);
   const sch=pmSched2(repMonth);
   // ties share a rank (1,1,3…)
@@ -1551,7 +1713,7 @@ function anReport(){
     ${rankTbl(pmRank.map(r=>({...r,cells:[r.c,r.a,r.pct+'%']})),['Completed','Assigned','Rate'])}
     <div class="hint">Ranked by PM completed; Rate = completed ÷ assigned. Deferred and n/a rows are excluded from both.
     <div class="hint">PM % = completed ÷ scheduled; deferred rows and statuses like Replaced/Excluded/No Need are excluded from both. Ties share a rank.
-     ${(()=>{const ck=sch.filter(x=>x.src==='check').length,ap=sch.filter(x=>x.picsrc==='check').length,rs=sch.filter(x=>(x.apic||[]).length).length;
+     ${(()=>{const {ck,ap,rs}=pmCoverage(sch);
        return (ck?`<b>${ck} of ${sch.length}</b> PM rows are confirmed by the official check-list — the rest come from the schedule file or app ticks. `
                  :'⚠ No official check-list has been imported for this month yet, so PM completion reflects only the schedule file and app ticks. ')
              +(ap?`PM credit follows the actual engineer recorded in the check-list for <b>${ap}</b> row(s)${rs?` (${rs} reassigned from the original schedule)`:''}; the remainder use the pre-assigned PIC.`
@@ -1582,8 +1744,59 @@ function anSites(){
     <div class="dim" style="margin-bottom:6px">Where the corrective-maintenance load concentrates</div>
     ${barList(tally(rows,s=>s.site),'var(--acc)',12,true)}</div>`;
 }
+// ---- v5.11: monthly performance per engineer (top card of Analysis > People) ----
+let anEng='All';
+function anPeopleMonthly(){
+  const PMR=pmRows(), cur=new Date().toISOString().slice(0,7);
+  const set=new Set(DB.svc.map(s=>(s.d||'').slice(0,7)).filter(Boolean));
+  new Set(PMR.map(pmBucket)).forEach(b=>{if(/^\d{4}-\d{2}$/.test(b)&&b>=PM_START&&pmOwed(PMR,b).length)set.add(b);});
+  let months=[...set].sort();
+  months=anYear==='All'?months.slice(-12):months.filter(m=>m.startsWith(anYear)&&m<=cur);
+  const head=`<h3>📅 Monthly performance by engineer</h3>`;
+  if(!months.length)return `<div class="card">${head}<div class="dim">No data for ${anYear==='All'?'this period':anYear}.</div></div>`;
+  const cm={},pm={};
+  months.forEach(m=>{cm[m]=cmPicStats(m);pm[m]=m>=PM_START?pmPicStats(PMR,m):{};});
+  const got=new Set();months.forEach(m=>{Object.keys(cm[m]).forEach(n=>got.add(n));Object.keys(pm[m]).forEach(n=>got.add(n));});
+  const names=[...ACTIVE.filter(n=>got.has(n)),...[...got].filter(n=>!ACTIVE.includes(n)).sort((a,b)=>a.localeCompare(b))];
+  if(anEng!=='All'&&!names.includes(anEng))anEng='All';
+  const cmv=(m,n)=>(cm[m][n]||{t:0}).t, pmc=(m,n)=>(pm[m][n]||{c:0}).c, pma=(m,n)=>(pm[m][n]||{a:0}).a;
+  const pmMonths=months.filter(m=>m>=PM_START);
+  const topCM={},topPM={};
+  months.forEach(m=>{topCM[m]=Math.max(0,...names.map(n=>cmv(m,n)));topPM[m]=Math.max(0,...names.map(n=>pmc(m,n)));});
+  const chips=`<div class="chips">${['All',...names].map(n=>`<button class="chip${anEng===n?' on':''}" onclick="anEng=${attr(n)};analysis()">${esc(n)}</button>`).join('')}</div>`;
+  const pmTxt=(m,c,a)=>m>=PM_START?(a?`PM ${c}/${a}`:'PM –'):'—';
+  let body;
+  if(anEng==='All'){
+    const rows=names.map(n=>{
+      const tc=months.reduce((s,m)=>s+cmv(m,n),0), tpc=pmMonths.reduce((s,m)=>s+pmc(m,n),0), tpa=pmMonths.reduce((s,m)=>s+pma(m,n),0);
+      return `<tr data-eng="${esc(n)}"><td style="text-align:left">${esc(n)}</td>${months.map(m=>{
+        const c=cmv(m,n),pc=pmc(m,n),pa=pma(m,n);
+        return `<td class="${c>0&&c===topCM[m]?'hc':''} ${pc>0&&pc===topPM[m]?'hp':''}" data-m="${esc(m)}" data-cm="${c}" data-pc="${pc}" data-pa="${pa}"><div>CM ${c}</div><div class="dim">${pmTxt(m,pc,pa)}</div></td>`;}).join('')}
+        <td class="tot" data-cm="${tc}" data-pc="${tpc}" data-pa="${tpa}"><div><b>CM ${tc}</b></div><div class="dim">${pmMonths.length?(tpa?`PM ${tpc}/${tpa}`:'PM –'):'—'}</div></td></tr>`;}).join('');
+    const sc=m=>names.reduce((s,n)=>s+cmv(m,n),0), spc=m=>names.reduce((s,n)=>s+pmc(m,n),0), spa=m=>names.reduce((s,n)=>s+pma(m,n),0);
+    const gc=months.reduce((s,m)=>s+sc(m),0), gpc=pmMonths.reduce((s,m)=>s+spc(m),0), gpa=pmMonths.reduce((s,m)=>s+spa(m),0);
+    body=`${chips}<div class="caltbl"><table class="reptbl mtx" id="pmatrix"><tr><th style="text-align:left">Engineer</th>${months.map(m=>`<th>${esc(m.slice(2))}</th>`).join('')}<th>Total</th></tr>${rows}
+      <tr class="totrow"><td style="text-align:left"><b>Credits</b></td>${months.map(m=>`<td data-m="${esc(m)}" data-cm="${sc(m)}" data-pc="${spc(m)}" data-pa="${spa(m)}"><div>CM ${sc(m)}</div><div class="dim">${pmTxt(m,spc(m),spa(m))}</div></td>`).join('')}
+      <td class="tot" data-cm="${gc}" data-pc="${gpc}" data-pa="${gpa}"><div><b>CM ${gc}</b></div><div class="dim">${pmMonths.length?`PM ${gpc}/${gpa}`:'—'}</div></td></tr></table></div>`;
+  }else{
+    const n=anEng, mx=Math.max(1,...months.map(m=>cmv(m,n)));
+    const rows=months.map(m=>{
+      const t=cmv(m,n), so=(cm[m][n]||{solo:0}).solo, c=pmc(m,n), a=pma(m,n), isPm=m>=PM_START;
+      return `<tr data-m="${esc(m)}" data-cm="${t}" data-solo="${so}" data-pc="${c}" data-pa="${a}"><td style="text-align:left">${esc(m)}</td><td>${t}</td><td>${so}</td><td>${t-so}</td><td>${isPm?c:'—'}</td><td>${isPm?a:'—'}</td><td>${isPm&&a?Math.round(100*c/a)+'%':'—'}</td>
+        <td style="min-width:70px"><div class="bar-track" style="height:10px"><div style="width:${100*t/mx}%;height:100%;background:var(--acc)"></div></div></td></tr>`;}).join('');
+    const tT=months.reduce((s,m)=>s+cmv(m,n),0), tS=months.reduce((s,m)=>s+(cm[m][n]||{solo:0}).solo,0);
+    const tC=pmMonths.reduce((s,m)=>s+pmc(m,n),0), tA=pmMonths.reduce((s,m)=>s+pma(m,n),0);
+    body=`${chips}<div class="caltbl"><table class="reptbl" id="pengtbl"><tr><th style="text-align:left">Month</th><th>CM cases</th><th>Solo</th><th>With others</th><th>PM completed</th><th>PM assigned</th><th>PM rate</th><th></th></tr>${rows}</table></div>
+      <div class="hint" id="pengsum"><b>${esc(n)}</b>: ${tT} CM cases over ${months.length} month(s) (avg ${(tT/months.length).toFixed(1)} / month; ${tS} solo, ${tT-tS} with others)${pmMonths.length?` · PM ${tC} of ${tA} completed${tA?` (${Math.round(100*tC/tA)}%)`:''}`:''}.</div>`;
+  }
+  const notes=pmMonths.filter(m=>pmNoCheck(PMR,m)).map(m=>`<div class="hint">⚠ ${esc(m)}: no official check-list imported — PM figures are schedule + app ticks only, not KPI.</div>`).join('');
+  return `<div class="card">${head}<div class="dim">${esc(months[0])} → ${esc(months[months.length-1])} · CM n = cases credited · PM c/a = completed / assigned (from ${PM_START})</div>
+    ${body}${notes}
+    <div class="hint">A compound PIC credits both engineers (CM and PM), same as the Report, so the Credits row can exceed the number of cases. CM count depends on case mix — it is not a productivity score.</div></div>`;
+}
 function anPeople(){
   const rows=anRows();
+  const monthly=anPeopleMonthly();
   const withPic=rows.filter(s=>(s.pic||[]).length>0);
   const per={},pairs={};
   withPic.forEach(s=>{const p=s.pic;p.forEach(n=>{per[n]=per[n]||{t:0,s:0};per[n].t++;if(p.length===1)per[n].s++;});
@@ -1593,7 +1806,7 @@ function anPeople(){
   const counts=tally(rows,s=>s.pic);
   const solo=withPic.filter(s=>s.pic.length===1).length, tot=withPic.length, soloPct=tot?Math.round(100*solo/tot):0;
   const top=perArr[0], low=[...perArr].sort((a,b)=>a.pct-b.pct||b.t-a.t)[0];
-  $('ansec').innerHTML=`
+  $('ansec').innerHTML=monthly+`
    <div class="card"><h3>CM count by engineer (PIC) — ${anYear==='All'?'all time':anYear}</h3>${barList(counts,'var(--acc)',14)}</div>
    <div class="kpis"><div class="kpi"><div class="n g">${soloPct}%</div><div class="l">Tickets handled solo</div></div>
      <div class="kpi"><div class="n">${100-soloPct}%</div><div class="l">Tickets needing 2+ people</div></div></div>
