@@ -540,7 +540,7 @@ def build_svc():
         p = r["properties"]
         d = prop(p, "Date")
         site = prop(p, "Site")
-        pic = aslist(prop(p, "PIC"))
+        pic = split_names(prop(p, "PIC"))
         if not d and not site and not pic:   # empty 新的問題 stubs
             continue
         # "Parts no. (if used)" is a MULTI-SELECT, so prop() returns a list —
@@ -633,14 +633,20 @@ def canon_name(n):
     if not s: return ""
     return ROSTER_L.get(s.lower(), s[:1].upper() + s[1:].lower())
 
+NAME_SEP_RE = re.compile(r"(?:\s+and\s+|[,;/\u3001+\uff0b&\s])+", re.I)   # , ; / 、 + ＋ & whitespace, " and "
+
 def split_names(v):
     """'Assigned to' is plain text in CSV imports ('Ray, Joe') but multi-select
     in the master list — accept both, and canonicalise every name."""
-    raw = v if isinstance(v, list) else re.split(r"[,;/、+&\s]+", str(v or ""))
+    # Multi-select options can be COMBINED names ("Ivan+Poon", "Ray+poon") — so split
+    # EVERY element, list or string, on the same separators. index.html canonList()
+    # applies the identical rule so old bundles are fixed without a rebuild.
+    elems = v if isinstance(v, list) else [v]
     out = []
-    for x in raw:
-        c = canon_name(x)
-        if c and c not in out: out.append(c)
+    for e in elems:
+        for x in NAME_SEP_RE.split(str(e or "")):
+            c = canon_name(x)
+            if c and c not in out: out.append(c)
     return out
 
 MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -793,7 +799,7 @@ def build_pm():
                     # so reassignments stay visible instead of silently vanishing.
                     if row["pic"]:
                         m["picsrc"] = "check"
-                        if old.get("pic") and old["pic"] != row["pic"]:
+                        if old.get("pic") and set(old["pic"]) != set(row["pic"]):   # order-insensitive: "Tim+Poon" vs "Poon+Tim" is not a reassignment
                             m["apic"] = old["pic"]
                     else:
                         m["pic"] = old.get("pic", [])      # no actual PIC recorded
@@ -936,6 +942,44 @@ def canon_pn(pn):
     p = PN_PREFIX_RE.sub("", str(pn).strip()).upper()
     return PN_ALIASES.get(p, p)
 
+def mach_fam(s):
+    """Python port of machFam() in index.html -- the two MUST stay identical
+    (tests/test_v512.py compares them on a list of raw machine types)."""
+    s = str(s or "")
+    if re.search(r"go\s*plus|^go\Z", s, re.I): return "Go Plus"
+    if re.search(r"nano", s, re.I): return "Nano"
+    if re.search(r"d-?evo|dr-id\s*1[28]", s, re.I): return "D-evo"
+    if re.search(r"smart", s, re.I): return "FDR Smart"
+    if re.search(r"^pc\Z|console|300cl|330cl", s, re.I): return "Console/PC"
+    if re.search(r"retrofit", s, re.I): return "Retrofit"
+    if re.search(r"mammo", s, re.I): return "Mammo"
+    if re.search(r"se lite", s, re.I): return "SE Lite"
+    return "Other"
+
+def part_fam(s):
+    """Parts-only family (Python port of partFam() in index.html). mach_fam() lumps D-evo 2/3 and
+    sends Amulet to Other; parts need them apart. Keep identical (tests/part_types.json)."""
+    s = str(s or ""); f = mach_fam(s)
+    if f == "D-evo":
+        if re.search(r"d-?evo\s*2|dr-id\s*121", s, re.I): return "D-evo 2"
+        if re.search(r"d-?evo\s*3|dr-id\s*18", s, re.I): return "D-evo 3"
+        return "D-evo"
+    if f == "Other" and re.search(r"mammo|amulet", s, re.I): return "Mammo"
+    return f
+
+def part_fams(machn, n=None):
+    """{family: count} folded from {rawType: count}. A part 'applies to' the families
+    whose count >= max(1, 20% of the part's uses n)."""
+    fam = {}
+    for k, v in (machn or {}).items():
+        f = part_fam(k); fam[f] = fam.get(f, 0) + v
+    return fam
+
+def applies_to(machn, n):
+    fam = part_fams(machn)
+    thr = max(1, 0.2 * (n or 0))
+    return [f for f, c in sorted(fam.items(), key=lambda kv: (-kv[1], kv[0])) if c >= thr]
+
 def build_parts(svc):
     print("Deriving parts catalog from CM records ...")
     cat = {}
@@ -950,11 +994,12 @@ def build_parts(svc):
                 merged.setdefault(cpn, set()).add(pn)
                 pn = cpn
             key = pn or name.lower()
-            e = cat.setdefault(key, {"name": name[:60], "pn": pn, "n": 0, "l2": {}, "mach": []})
+            e = cat.setdefault(key, {"name": name[:60], "pn": pn, "n": 0, "l2": {}, "mach": [], "machn": {}})
             e["n"] += 1
             if s.get("l2"): e["l2"][s["l2"]] = e["l2"].get(s["l2"], 0) + 1
             for mch in s.get("mach", []):
                 if mch not in e["mach"]: e["mach"].append(mch)
+                e["machn"][mch] = e["machn"].get(mch, 0) + 1   # a ticket tagged with two machines credits both
     parts = sorted(cat.values(), key=lambda x: -x["n"])
     folded = {k: sorted(v) for k, v in merged.items() if len(v) > 1}
     print(f"  {len(parts)} distinct parts")

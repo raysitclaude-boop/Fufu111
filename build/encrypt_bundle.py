@@ -28,6 +28,7 @@ import json, os, sys
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from pull_notion import applies_to   # same folding rules the app uses (build/ is on sys.path when run as a script)
 
 SRC = "data/bundle.json"
 # Worker bundle contents. "svc" is included so field engineers can check a
@@ -54,8 +55,10 @@ def worker_svc(svc):
 def worker_parts(parts):
     """Plain parts reference for the worker: name + part number only. Drops the
     usage frequency ('n'), the Problem-L2 breakdown ('l2') and machines ('mach')
-    — the worker parts tab is just a lookup list, not analytics."""
-    out = [{"name": p.get("name", ""), "pn": p.get("pn", "")} for p in (parts or [])]
+    — the worker parts tab is just a lookup list, not analytics. v5.12 adds `fam`:
+    the applies-to family NAMES only (no counts), derived at build time."""
+    out = [{"name": p.get("name", ""), "pn": p.get("pn", ""),
+            "fam": applies_to(p.get("machn"), p.get("n"))} for p in (parts or [])]
     out.sort(key=lambda p: p["name"].lower())
     return out
 
