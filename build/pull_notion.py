@@ -484,7 +484,11 @@ def build_items():
               "netd": prop(p, "Network Updated"),
               "netby": prop(p, "Network Updated By"),
               "infoby": prop(p, "Info Updated By"),
-              "infod": prop(p, "Info Updated")}
+              "infod": prop(p, "Info Updated"),
+              # v5.13: Go Plus / Nano latest replacement dates (YYYY-MM-DD or "")
+              "batd": prop(p, "System Battery Replaced"),
+              "hsd": prop(p, "Wired Hand Switch Replaced"),
+              "emgd": prop(p, "Emergency Battery Replaced")}
         items.append(it)
         # Sector map: first NON-EMPTY value wins. (Previously first-seen won, so a
         # site whose first row had a blank HA Cluster stayed unmapped forever.)
