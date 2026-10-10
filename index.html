@@ -277,7 +277,7 @@ async function unlock(){
   boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-const APP_VER='v5.12';
+const APP_VER='v5.13';
 // --- HA cluster names -------------------------------------------------------
 // The official HA list has 6 clusters; Hong Kong East and Hong Kong West were
 // merged into Hong Kong Island. Old bundles cached on a phone may still carry
@@ -361,14 +361,14 @@ function svcLine(s){
 // ---------- router ----------
 function go(p,arg){
   if(ROLE==='worker'&&['fix','analysis','card','part','sym','kb','mcode'].includes(p))p='pm';
-  if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox','assetnet','assetinfo','sym','kb','mcode'].includes(p))PREV=route;
+  if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox','assetnet','assetinfo','assetacc','sym','kb','mcode'].includes(p))PREV=route;
   if(p!=='site'||route.p!=='site'||route.arg!==arg)siteMode=null;
   route={p,arg}; render(); window.scrollTo(0,0);
 }
 function render(){
-  const map={item:'serial',site:'sites',card:'fix',part:'parts',visitnew:'pm',visitedit:'pm',logresult:'pm',mismatch:'serial',outbox:'pm',assetnet:'serial',assetinfo:'serial',sym:'fix',kb:'fix',mcode:'fix'};
+  const map={item:'serial',site:'sites',card:'fix',part:'parts',visitnew:'pm',visitedit:'pm',logresult:'pm',mismatch:'serial',outbox:'pm',assetnet:'serial',assetinfo:'serial',assetacc:'serial',sym:'fix',kb:'fix',mcode:'fix'};
   ['sites','serial','fix','parts','pm','analysis'].forEach(k=>$('nb-'+k)?.classList.toggle('on',route.p===k||map[route.p]===k));
-  ({sites,serial,fix,parts,pm,analysis,item,site,card,part,visitnew,visitedit,logresult,mismatch,outbox,assetnet,assetinfo,sym,kb,mcode})[route.p](route.arg);
+  ({sites,serial,fix,parts,pm,analysis,item,site,card,part,visitnew,visitedit,logresult,mismatch,outbox,assetnet,assetinfo,assetacc,sym,kb,mcode})[route.p](route.arg);
 }
 
 // ---------- Sites ----------
@@ -629,6 +629,7 @@ function item(sn){
    ${i.remark?`<div class="hint">📝 ${esc(i.remark)}</div>`:''}${i.infod?`<div class="dim" style="margin-top:2px">✏️ info updated ${esc(i.infod)}${i.infoby?(' · '+esc(i.infoby)):''}</div>`:''}
    <button class="btn sm" style="margin-top:8px" onclick="go('assetinfo',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">✏️ Update item info (system # / model / status / remark)</button>
    <button class="btn sec sm" onclick="go('mismatch',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">🔁 Serial on the unit is different? Report it</button></div>
+   ${accEligible(i)?accCard(i):''}
    ${netEligible(i)?netCard(i):''}
    ${set.length?`<div class="sys">Same system set (${esc(i.sysno)})</div>`+set.map(x=>itemLine(x,false)).join(''):''}
    <div class="sys">Service history (${hist.length})</div>
@@ -695,6 +696,66 @@ function submitNet(sn){
   enqueue('PATCH','/asset-net/'+i.pid,{set},`Console ${i.site} ${sn}: ${ip||mc||apl||'remark'}`);
   // optimistic local update so values show on the item screen right away
   i.mcver=mc; i.apl=apl; i.ip=ip; i.subnet=sub; i.gw=gw; i.login=login; i.pw=pw; i.remark=rmk; i.netby=myName(); i.netd=new Date().toISOString().slice(0,10);
+  go('item',sn);
+}
+// --- v5.13: Go Plus / Nano replacement dates (system battery / wired hand switch / emergency battery) ---
+// Latest replacement date only, stored on the machine's Item Master row via PATCH /asset-info
+// (Notion date properties, stamped Info Updated / By). A blank date clears the field.
+const ACC=[['batd','System battery','System Battery Replaced'],['hsd','Wired hand switch','Wired Hand Switch Replaced'],['emgd','Emergency battery','Emergency Battery Replaced']];
+const ACC_FIELD={sysno:'System #'}; ACC.forEach(([k,,f])=>ACC_FIELD[k]=f);   // payload key -> Notion field the Worker must list back
+// Go Plus (MQ serial) and Nano machines only — Asset Type Machine (or blank); never detectors, consoles, printers, accessories.
+function accEligible(i){
+  const t=i.type||'';
+  return ['goplus','nano'].includes(itemFam(i))&&(t==='Machine'||t==='');
+}
+// Today in the PHONE's time zone (todayISO() is UTC — before 08:00 in HK it would give yesterday).
+const localISO=()=>{const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,10)};
+const isRealDate=v=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&!isNaN(Date.parse(v+'T00:00:00Z'))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v;
+function accAge(v){
+  if(!isRealDate(v||''))return '';
+  const a=new Date(v+'T00:00:00Z'), b=new Date(localISO()+'T00:00:00Z');
+  let m=(b.getUTCFullYear()-a.getUTCFullYear())*12+(b.getUTCMonth()-a.getUTCMonth()); if(b.getUTCDate()<a.getUTCDate())m--;
+  if(v>localISO())return 'future date?'; if(m<1)return 'this month'; const y=Math.floor(m/12), r=m%12;
+  return (y?y+' y ':'')+(r?r+' m ':'')+'ago';
+}
+function accCard(i){
+  const row=([k,l])=>`<div class="row" style="margin:2px 0"><span class="dim">${l}</span><b>${i[k]?esc(i[k])+` <span class="dim" style="font-weight:normal">(${esc(accAge(i[k]))})</span>`:'—'}</b></div>`;
+  const any=ACC.some(([k])=>i[k]);
+  return `<div class="card">
+   <div class="row"><h3>🔋 Battery / hand switch</h3><span class="dim">last replaced</span></div>
+   ${ACC.map(row).join('')}
+   ${any?'':'<div class="hint">No replacement dates recorded yet.</div>'}
+   <button class="btn sm" style="margin-top:8px" onclick="go('assetacc',${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">📝 Record replacement date</button></div>`;
+}
+function assetacc(sn){
+  const need=needIdentity();
+  if(need==='setkey'||need==='setname'){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span>`+identityCard();return}
+  if(need){V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><div class="card"><div class="dim">${esc(need)}</div></div>`;return}
+  const i=DB.items.find(x=>x.sn===sn); if(!i){go('serial');return}
+  const today=localISO();
+  V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>🔋 Record replacement date</h2>
+   <div class="hint">Date of the LATEST replacement. Saved onto this machine in the Item Master, stamped with your name and today's date. Only the dates you change are sent; clear a box to remove a wrong date.</div>
+   <div class="card"><h3>${esc(i.sn)}</h3><div class="dim">${esc(i.model||'')} · ${esc(i.site||'')} ${i.sysno?('· System '+esc(i.sysno)):''}</div></div>
+   ${ACC.map(([k,l])=>`<div class="fld"><label>${l} — last replaced</label>
+     <div class="row" style="gap:6px"><input type="date" id="a_${k}" value="${esc(i[k]||'')}" min="2000-01-01" max="${today}" style="flex:1">
+     <button type="button" class="chip" onclick="$('a_${k}').value=localISO()">Today</button></div></div>`).join('')}
+   <button class="btn" onclick="submitAcc(${JSON.stringify(i.sn).replace(/"/g,'&quot;')})">Save (queues if offline)</button>`;
+}
+function submitAcc(sn){
+  const i=DB.items.find(x=>x.sn===sn); if(!i)return;
+  if(!i.pid){alert('This asset predates the item-info update — run the nightly build once, then try again.');return}
+  const today=localISO(), set={};
+  for(const [k,l] of ACC){
+    const v=($('a_'+k).value||'').trim();
+    if(v===(i[k]||''))continue;          // only changed fields are checked and sent; '' = clear
+    if(v&&!isRealDate(v)){alert(l+': enter a valid date.');return}
+    if(v&&(v>today||v<'2000-01-01')){alert(l+': the date can\'t be in the future (or before 2000).');return}
+    set[k]=v;
+  }
+  if(!Object.keys(set).length){alert('Nothing changed — pick a date.');return}
+  const lbl=ACC.filter(([k])=>k in set).map(([k,l])=>`${l} ${set[k]||'(cleared)'}`).join(' / ');
+  enqueue('PATCH','/asset-info/'+i.pid,{set},`Replaced ${i.site||''} ${sn}: ${lbl}`);
+  Object.assign(i,set); i.infoby=myName(); i.infod=today;   // optimistic local update
   go('item',sn);
 }
 // --- Update item info (system # / model / status / remark) — direct edit, any item -------
@@ -1476,8 +1537,10 @@ async function flushOutbox(force){
         if(d.ok){
           // v5.11: an out-of-date Worker ignores System # but still answers ok. The new Worker lists the
           // Notion fields it wrote — if a System # job comes back without it, don't call it saved.
-          if(/^\/asset-info\//.test(j.path)&&j.payload&&j.payload.set&&j.payload.set.sysno!==undefined&&!(Array.isArray(d.fields)&&d.fields.includes('System #'))){
-            j.st='failed';j.err='Worker out of date — System # NOT saved (other fields were). Ask R to update the Cloudflare Worker, then tap Retry.';j.code=r.status;
+          // v5.13: same for the replacement dates — every System # / date key sent must come back in d.fields.
+          const missing=(/^\/asset-info\//.test(j.path)&&j.payload&&j.payload.set)?Object.keys(ACC_FIELD).filter(k=>j.payload.set[k]!==undefined&&!(Array.isArray(d.fields)&&d.fields.includes(ACC_FIELD[k]))).map(k=>ACC_FIELD[k]):[];
+          if(missing.length){
+            j.st='failed';j.err=`Worker out of date — ${missing.join(', ')} NOT saved (other fields were). Ask R to update the Cloudflare Worker, then tap Retry.`;j.code=r.status;
             j.hold=true;   // never auto-resent (timer / online / force flushes skip it); retryJob() clears the hold and issues a fresh rid
           }else{j.st='confirmed';j.err='';j.id=d.id;}
         }
