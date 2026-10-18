@@ -1,6 +1,8 @@
 # Place at .github/workflows/nightly.yml in the repo (replaces the old one).
 # V5: adds WORKER_PW (worker-account bundle) + WRITE_KEY (embedded write key),
 #     commits dataw.enc alongside data.enc.
+# V5.13: adds USER_ACCOUNTS + USER_SECRET (personal engineer accounts) -> datae.enc + users.json
+#     (users.json is written to the repo root, not data/, so `rm -f data/*.json` leaves it alone).
 name: Nightly data refresh
 on:
   schedule: [{cron: "0 20 * * *"}]   # 04:00 HKT
@@ -21,6 +23,8 @@ jobs:
           FIELD_PW: "${{ secrets.FIELD_PW }}"
           WORKER_PW: "${{ secrets.WORKER_PW }}"
           WRITE_KEY: "${{ secrets.WRITE_KEY }}"
+          USER_ACCOUNTS: "${{ secrets.USER_ACCOUNTS }}"
+          USER_SECRET: "${{ secrets.USER_SECRET }}"
       # Static Item Master viewer. NOT committed — it has no login and would
       # expose every serial/site if pushed to the public Pages site. Uploaded as
       # a PRIVATE workflow artifact instead: download it from the Actions run.
@@ -36,5 +40,6 @@ jobs:
           git config user.name bot && git config user.email bot@local
           git add data.enc
           git add dataw.enc || true
+          git add datae.enc users.json || true
           git commit -m "nightly data refresh" || echo "no change"
           git push
