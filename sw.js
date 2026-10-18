@@ -1,5 +1,5 @@
-const CACHE='fujifield-v5.13';
-const ASSETS=['./','index.html','data.enc','dataw.enc','manifest.json','apple-touch-icon.png'];
+const CACHE='fujifield-v5.14';
+const ASSETS=['./','index.html','data.enc','dataw.enc','datae.enc','users.json','manifest.json','apple-touch-icon.png'];
 // allSettled: dataw.enc may not exist until the first V5 nightly build — don't brick install on a 404
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>Promise.allSettled(ASSETS.map(a=>c.add(a)))).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
@@ -16,7 +16,7 @@ self.addEventListener('fetch',e=>{
   const url=new URL(e.request.url);
   if(url.origin!==location.origin) return;                 // let write-proxy calls hit the network
   const p=url.pathname;
-  if(e.request.mode==='navigate'||p.endsWith('.enc')||p.endsWith('/')||p.endsWith('index.html')||p.endsWith('sw.js')){
+  if(e.request.mode==='navigate'||p.endsWith('.enc')||p.endsWith('users.json')||p.endsWith('/')||p.endsWith('index.html')||p.endsWith('sw.js')){
     netFirst(e);
   }else{
     e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(n=>{if(n.ok)caches.open(CACHE).then(c=>c.put(e.request,n.clone()));return n})));

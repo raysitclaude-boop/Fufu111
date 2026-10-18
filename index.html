@@ -114,7 +114,8 @@ details.proc .body{padding:6px 14px 14px}
 <body>
 <div id="gate">
   <h2>🧰 FUJI Field</h2>
-  <p>Enter your password to unlock the offline data.</p>
+  <p>Personal account: enter your name and password. Team password: leave the name blank.</p>
+  <input type="text" id="uname" placeholder="Name (personal account)" autocomplete="username" autocapitalize="words" autocorrect="off">
   <input type="password" id="pw" placeholder="Password" autocomplete="current-password">
   <label class="rem"><input type="checkbox" id="rem"> Remember on this device</label>
   <div class="err" id="gerr"></div>
@@ -265,19 +266,45 @@ async function tryDecrypt(file,pw){
   const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv},key,ct);
   return JSON.parse(new TextDecoder().decode(pt));
 }
+// v5.13 personal account: users.json[name] = b64(salt16||iv12||AES-GCM(PBKDF2(pw), {name,k,tok})); k opens datae.enc (iv12||ct)
+async function personalLogin(un,pw,fo){   // fo = fetch options; {cache:'reload'} bypasses a stale cache
+  const NOSET=new Error('noset'), r=await fetch('users.json',fo); if(!r.ok)throw NOSET;
+  const uj=await r.json(), ent=(uj.users||{})[un.toLowerCase()]; if(!ent)throw new Error('badpw');   // unknown name = same message as wrong password
+  const b=Uint8Array.from(atob(ent),c=>c.charCodeAt(0));
+  const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']);
+  const wk=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b.slice(0,16),iterations:uj.iter||150000,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['decrypt']);
+  let pay; try{ pay=JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:b.slice(16,28)},wk,b.slice(28)))); }catch(e){ throw new Error('badpw'); }
+  const e2=await fetch('datae.enc',fo); if(!e2.ok)throw NOSET;
+  const d=new Uint8Array(await e2.arrayBuffer()); let db;
+  try{ const K=await crypto.subtle.importKey('raw',Uint8Array.from(atob(pay.k),c=>c.charCodeAt(0)),'AES-GCM',false,['decrypt']);
+    db=JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:d.slice(0,12)},K,d.slice(12)))); }
+  catch(e){ throw new Error('stale'); }   // users.json and datae.enc from different builds (mid-deploy / stale cache)
+  db.user=pay.name; db.utok=pay.tok; return db;
+}
 async function unlock(){
   $('gerr').textContent='';
-  const pw=$('pw').value;
-  try{ DB=await tryDecrypt('data.enc',pw); }
-  catch(e){
-    try{ DB=await tryDecrypt('dataw.enc',pw); }
-    catch(e2){ $('gerr').textContent='Wrong password (or data not reachable).'; return; }
+  const pw=$('pw').value, un=$('uname').value.trim();
+  if(un){
+    try{
+      try{ DB=await personalLogin(un,pw); }
+      catch(e){ if(e.message!=='stale')throw e; DB=await personalLogin(un,pw,{cache:'reload'}); }   // one retry, both files re-fetched from the network
+    }catch(e){ DB=null; $('gerr').textContent=e.message==='noset'?'Personal accounts are not set up yet — use the team password.':e.message==='stale'?'Data is updating — try again in a few minutes.':'Unknown name or wrong password.'; return; }
+    localStorage.setItem(NAME_LS,DB.user);
+    if($('rem').checked){localStorage.setItem('fw_pw',pw);localStorage.setItem('fw_user',un);}
+    else{localStorage.removeItem('fw_pw');localStorage.removeItem('fw_user');}
+  }else{
+    try{ DB=await tryDecrypt('data.enc',pw); }
+    catch(e){
+      try{ DB=await tryDecrypt('dataw.enc',pw); }
+      catch(e2){ $('gerr').textContent='Wrong password (or data not reachable).'; return; }
+    }
+    if($('rem').checked){localStorage.setItem('fw_pw',pw);localStorage.removeItem('fw_user');}
+    else{localStorage.removeItem('fw_pw');localStorage.removeItem('fw_user');}
   }
-  if($('rem').checked) localStorage.setItem('fw_pw',pw);
   boot();
 }
-async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('rem').checked=true;await unlock();}
-const APP_VER='v5.13';
+async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('uname').value=localStorage.getItem('fw_user')||'';$('rem').checked=true;await unlock();}
+const APP_VER='v5.14';
 // --- HA cluster names -------------------------------------------------------
 // The official HA list has 6 clusters; Hong Kong East and Hong Kong West were
 // merged into Hong Kong Island. Old bundles cached on a phone may still carry
@@ -332,10 +359,11 @@ function boot(){
   // normalise engineer names once, so old bundles are fixed without a rebuild
   DB.pm.forEach(x=>{x.pic=canonList(x.pic);x.apic=canonList(x.apic);x.chk=canonList(x.chk);});
   DB.svc.forEach(s=>{s.pic=canonList(s.pic);});
-  if(ROLE==='worker')['fix','analysis'].forEach(k=>{const b=$('nb-'+k);if(b)b.style.display='none';});
-  $('asof').textContent=APP_VER+' · Data: '+DB.asof;
+  if(ROLE==='worker')['analysis'].forEach(k=>{const b=$('nb-'+k);if(b)b.style.display='none';});   // v5.14: worker sees Fix › By Symptom (CM-derived only; bundle unchanged)
+  if(ROLE==='engineer')['analysis'].forEach(k=>{const b=$('nb-'+k);if(b)b.style.display='none';});   // v5.13: personal accounts get Fix, not Analysis
+  $('asof').textContent=APP_VER+' · Data: '+DB.asof+(DB.user?' · 👤 '+DB.user:'');
   updateSyncBadge();flushOutbox();
-  go(ROLE==='worker'?'pm':'sites');
+  go(ROLE==='worker'||ROLE==='engineer'?'pm':'sites');
 }
 
 // ---------- shared render helpers ----------
@@ -360,7 +388,8 @@ function svcLine(s){
 
 // ---------- router ----------
 function go(p,arg){
-  if(ROLE==='worker'&&['fix','analysis','card','part','sym','kb','mcode'].includes(p))p='pm';
+  if(ROLE==='worker'&&['analysis','card','part','kb','mcode'].includes(p))p='pm';   // v5.14: 'fix' + 'sym' open to worker
+  if(ROLE==='engineer'&&p==='analysis')p='pm';
   if(['item','part','card','visitnew','visitedit','logresult','mismatch','outbox','assetnet','assetinfo','assetacc','sym','kb','mcode'].includes(p))PREV=route;
   if(p!=='site'||route.p!=='site'||route.arg!==arg)siteMode=null;
   route={p,arg}; render(); window.scrollTo(0,0);
@@ -796,6 +825,11 @@ function submitInfo(sn){
 //  FIX  →  sub-tabs: Symptom | Error Codes | Procedures
 // ==================================================================
 function fix(){
+  if(ROLE==='worker'){   // v5.14: worker bundle has no manual tables / procedures -> By Symptom only
+    fixTab='symptom';
+    V().innerHTML=`<div class="subtabs"><button class="on">🩺 By Symptom</button></div><div id=fixbody></div>`;
+    fixSymptom(); return;
+  }
   V().innerHTML=`<div class="subtabs">
      <button class="${fixTab==='symptom'?'on':''}" onclick="fixTab='symptom';fix()">🩺 By Symptom</button>
      <button class="${fixTab==='errors'?'on':''}" onclick="fixTab='errors';fix()">🔢 Error Codes</button>
@@ -884,7 +918,7 @@ function drawSymDefault(){
   let html=rows.map(x=>symRow(filtered(x))).join('');
   if(admin.length)html+=`<details class="proc"><summary><span>Service / admin entries</span><span class="tag">${admin.length}</span></summary><div class="body">${admin.map(x=>symRow(filtered(x))).join('')}</div></details>`;
   html+=`<div class="hint">${SYM_UNTAGGED} CM record${SYM_UNTAGGED===1?'':'s'} ${SYM_UNTAGGED===1?'has':'have'} no symptom tag — type to search them.</div>`;
-  if(!(DB.kb||[]).length&&!(DB.mref||[]).length&&!(DB.mcodes||[]).length)
+  if(ROLE!=='worker'&&!(DB.kb||[]).length&&!(DB.mref||[]).length&&!(DB.mcodes||[]).length)
     html+=`<div class="hint">📘 Manual index arrives with the next nightly data build.</div>`;
   $('list').innerHTML=html||'<div class=dim style=margin-top:10px>No symptoms recorded yet.</div>';
 }
@@ -971,10 +1005,12 @@ function fixSearch(){
     if(eh.length)out+=`<div class="sys">📖 Manual error codes (${eh.length}${eh.length===25?'+':''})</div>`+eh.map(errHitRow).join('');
   }
   if(q.length>=3){
-    const rec=DB.svc.filter(s=>machMatch(s)&&((s.sym||[]).join(' ')+' '+(s.err||[]).join(' ')+' '+s.act+' '+s.l2).toLowerCase().includes(q)).slice(0,30);
+    const rec=DB.svc.filter(s=>machMatch(s)&&((s.sym||[]).join(' ')+' '+(s.err||[]).join(' ')+' '+(s.act||'')+' '+(s.l2||'')).toLowerCase().includes(q)).slice(0,30);
     if(rec.length)out+=`<div class="sys">Matching past cases (${rec.length}${rec.length===30?'+':''})</div>`+rec.map(svcLine).join('');
   }
-  $('list').innerHTML=out||'<div class=dim style=margin-top:10px>No match in symptoms, solution cards, guides, manual, or past cases. Try 2+ characters, or the SOP hub in Notion.</div>';
+  $('list').innerHTML=out||(ROLE==='worker'
+    ?'<div class=dim style=margin-top:10px>No match in symptoms or past cases. Try 2+ characters.</div>'
+    :'<div class=dim style=margin-top:10px>No match in symptoms, solution cards, guides, manual, or past cases. Try 2+ characters, or the SOP hub in Notion.</div>');
 }
 // --- 2) Error Code Index ---
 function fixErrors(){
@@ -1189,7 +1225,9 @@ function sym(name){
   html+=`<div class="sys">🧾 Past cases (${cases.length})</div>`
     +shown.map(s=>(s.rv==='Revisited'?'<span class="tag warn">↩ Revisit</span>':'')+svcLine(s)).join('')
     +(sorted.length>symPageN?`<button class="btn sec sm" onclick="symShowMore()">Show more</button>`:'')
-    +`<div class="hint">Actions are as typed in the CM record — verify before applying.</div>`;
+    +(ROLE==='worker'
+      ?`<div class="hint">Actions Taken are not included in the team account.</div>`
+      :`<div class="hint">Actions are as typed in the CM record — verify before applying.</div>`);
 
   // ---- Related symptoms ----
   const rel={};
@@ -1489,13 +1527,18 @@ function tickPM(ids){
 
 // ================= V4: identity, outbox, live visits =================
 const uid=()=>crypto.randomUUID?crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2));
-const myName=()=>localStorage.getItem(NAME_LS)||'';
+const myName=()=>(DB&&DB.user)||localStorage.getItem(NAME_LS)||'';
 const writeKey=()=>(DB&&DB.wkey)||localStorage.getItem(WRITE_KEY_LS)||'';
-function needIdentity(){ if(!workerReady())return 'Worker URL not configured yet — ask R.'; if(!writeKey())return 'setkey'; if(!myName())return 'setname'; return null; }
+// v5.13: personal accounts send X-User + token (Worker stamps the verified name); team logins send the shared key
+const authHeaders=()=>DB&&DB.user?{'X-User':DB.user,'X-User-Token':DB.utok}:{'X-Write-Key':writeKey()};
+const authReady=()=>DB&&DB.user?!!DB.utok:!!writeKey();
+function signOut(){['fw_pw','fw_user',NAME_LS].forEach(k=>localStorage.removeItem(k));location.reload();}
+function needIdentity(){ if(!workerReady())return 'Worker URL not configured yet — ask R.'; if(DB&&DB.user)return null; if(!writeKey())return 'setkey'; if(!myName())return 'setname'; return null; }
 function identityCard(){
+  if(DB&&DB.user)return `<div class="card"><h3>⚙️ Setup</h3><div class="fld">Signed in as <b>${esc(DB.user)}</b> (personal account) · <span class="click" style="color:var(--acc)" onclick="signOut()">Sign out</span></div></div>`;
   return `<div class="card"><h3>⚙️ Setup</h3>
     <div class="fld"><label>Your name (stamped on every entry you submit)</label>
-      <div class="chips">${ACTIVE.map(n=>`<button class="chip${myName()===n?' on':''}" onclick="localStorage.setItem('${NAME_LS}','${n}');render()">${n}</button>`).join('')}</div></div>
+      <div class="chips">${ACTIVE.map(n=>`<button class="chip${myName()===n?' on':''}" onclick="localStorage.setItem('${NAME_LS}','${n}');render();flushOutbox()">${n}</button>`).join('')}</div></div>
     ${DB&&DB.wkey?'':`<div class="fld"><label>Team write key (get it from R — not the data password)</label>
       <input type="text" id="wkey" value="${esc(writeKey())}" placeholder="Write key" autocapitalize="off" autocorrect="off">
       <button class="btn sm sec" onclick="localStorage.setItem('${WRITE_KEY_LS}',$('wkey').value.trim());render()">Save key</button></div>`}</div>`;
@@ -1529,9 +1572,10 @@ async function flushOutbox(force){
     // jobs enqueued while a fetch was in flight must survive. Entries are matched on the immutable j.uuid.
     const persist=j=>{const cur=getOutbox();const k=cur.findIndex(x=>x.uuid===j.uuid);if(k>=0)cur[k]=j;setOutbox(cur);};
     for(const j of box.filter(x=>x.st!=='confirmed'&&!x.hold)){   // held jobs (out-of-date Worker) wait for an explicit Retry
+      if(!myName())continue;   // no identity (e.g. after Sign out + team login): never send by:'' — stays queued until needIdentity()'s name prompt is answered
       try{
         const r=await fetch(WORKER_URL+j.path,{method:j.method,
-          headers:{'Content-Type':'application/json','X-Write-Key':writeKey()},
+          headers:{'Content-Type':'application/json',...authHeaders()},
           body:JSON.stringify({...j.payload,uuid:j.rid||j.uuid,by:myName()})});   // j.rid = fresh idempotency key after an out-of-date-Worker failure; j.uuid (the outbox key) never changes
         const d=await r.json().catch(()=>({}));
         if(d.ok){
@@ -1581,9 +1625,9 @@ setInterval(()=>{if(getOutbox().some(x=>x.st!=='confirmed'))flushOutbox();},6000
 // ---- live visits cache ----
 const getVisits=()=>JSON.parse(localStorage.getItem(VISITS_LS)||'null');
 async function refreshVisits(silent){
-  if(!workerReady()||!writeKey()||!navigator.onLine)return;
+  if(!workerReady()||!authReady()||!navigator.onLine)return;
   try{
-    const r=await fetch(WORKER_URL+'/visits',{headers:{'X-Write-Key':writeKey()}});
+    const r=await fetch(WORKER_URL+'/visits',{headers:authHeaders()});
     const d=await r.json();
     if(d.ok){localStorage.setItem(VISITS_LS,JSON.stringify(d));if(!silent&&route.p==='pm')render();}
   }catch(e){}
@@ -1619,7 +1663,7 @@ function pmVisits(){
   if(vSt==='Done')rows=rows.filter(v=>v.result);
   rows.sort((a,b)=>(a.d||'9999').localeCompare(b.d||'9999'));
   $('pmbody').innerHTML=`
-   <div class="row" style="margin:2px 0 6px"><span class="dim">👤 ${esc(myName())} · <span class="click" style="color:var(--acc)" onclick="localStorage.removeItem('${NAME_LS}');render()">change</span></span>
+   <div class="row" style="margin:2px 0 6px"><span class="dim">👤 ${esc(myName())} ${DB.user?'':` · <span class="click" style="color:var(--acc)" onclick="localStorage.removeItem('${NAME_LS}');render()">change</span>`}</span>
      <span class="dim click" style="color:var(--acc)" onclick="refreshVisits()">↻ refresh</span></div>
    <div class="chips">${['Mine','All'].map(x=>`<button class="chip${vPic===x?' on':''}" onclick="vPic='${x}';render()">${x}</button>`).join('')}
      ${['Open','Done','Everything'].map(x=>`<button class="chip${vSt===x?' on':''}" onclick="vSt='${x}';render()">${x}</button>`).join('')}</div>
@@ -1731,13 +1775,14 @@ function outbox(){
   const box=getOutbox();
   V().innerHTML=`<span class="back" onclick="goBack()">← Back</span><h2>⏳ Sync queue</h2>
    <button class="btn sec" onclick="flushOutbox(true)">↻ Try to sync now</button>
+   ${myName()?'':identityCard()+'<div class="hint">Pick your name — queued entries are sent as soon as you do.</div>'}
    ${(()=>{const st=box.filter(j=>j.st!=='confirmed'&&jobAgeMs(j)>86400e3).length;
      return st?`<div class="card warn"><b>⚠️ ${st} entr${st===1?'y has':'ies have'} been waiting over 24 hours.</b>
       <div class="dim">Nothing syncs while the app is closed. Stay on Wi-Fi, tap “Try to sync now”, and tell R if anything still says <b>failed</b>.</div></div>`:''})()}
    ${box.slice().reverse().map(j=>`<div class="card${j.st!=='confirmed'?' pend':''}">
      <div class="row"><h3>${esc(j.label)}</h3><span class="tag ${j.st==='confirmed'?'ok':(j.st==='failed'?'bad':'warn')}">${j.st}</span></div>
      <div class="dim">${esc(j.ts.slice(0,16).replace('T',' '))}${j.st!=='confirmed'?' · '+ageLabel(j):''}${j.tries?` · ${j.tries} tr${j.tries===1?'y':'ies'}`:''}</div>
-     ${j.err?`<div class="dim" style="color:var(--bad)">${esc(j.err)}${j.code===401||j.code===403?' — write key rejected; R must re-check the Worker key.':''}</div>`:''}
+     ${j.err?`<div class="dim" style="color:var(--bad)">${esc(j.err)}${(j.code===401||j.code===403)&&!(DB&&DB.user)?' — write key rejected; R must re-check the Worker key.':''}</div>`:''}
      ${j.st==='failed'?`<button class="btn sm sec" onclick="retryJob('${j.uuid}')">Retry</button><button class="btn sm sec" onclick="dropJob('${j.uuid}')">Delete</button>`:''}
    </div>`).join('')||'<div class=dim style=margin-top:10px>Queue is empty — everything synced.</div>'}`;
 }
