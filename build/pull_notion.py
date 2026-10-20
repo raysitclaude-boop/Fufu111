@@ -62,6 +62,7 @@ ERROR_PAGES = [
 PROCEDURE_DOCS = [
     # (tag shown in UI, page id)
     ("QA", "2f3a9088-5bbb-808a-bdb0-f2ef113ae661"),   # Calibration / QA values page
+    ("Calibration", "3ffa9088-5bbb-8165-810c-d3ef78b42dd6"),   # SE Lite (Mars1717XF/1417XF) detector calibration, R 2026-10-20
 ]
 
 # ----------------------------------------------------------------------------
