@@ -56,6 +56,13 @@ ERROR_PAGES = [
     ("goplus", "FDR Go Plus — Error Codes & Parts", "Hand-copied from official manual pages in Notion — verify against the unit.", "4457ef81-90f9-49cb-b950-042d666950e2"),
     ("nano",   "FDR Nano (DR-XD1000) — Error Codes", "Hand-copied from official manual pages in Notion — verify against the unit.", "d8f3787a-8585-43da-af4a-5569e6f4bd29"),
     ("devo3",  "D-evo 3 (DR-ID 1800) — Error Codes", "Hand-copied from official manual pages in Notion — verify against the unit.", "33ca9088-5bbb-807b-81ba-fc9f84744079"),
+    # v5.15 (R 2026-10-20): FDR Smart generator codes. A list of (page id, group
+    # title) pulls several pages into ONE chip. Source = the FGX-US manual KB's
+    # own §8.2 / §8.1 table pages (018-233-03E Rev.03). Team writes warnings as
+    # "W72"; the manual prints "0x72" — the app treats them as the same code.
+    ("smart",  "FDR Smart (FGX-US generator) — Error Codes", "From the FDR Smart FGX-US service manual (US model) — HK units may show codes not listed here; verify against the unit. Warnings: W72 = 0x72.",
+     [("3f2a9088-5bbb-81b3-80d5-dcd2916175f5", "8.2 Error messages (E codes)"),
+      ("3f2a9088-5bbb-81f7-8da2-c30e8ab871c2", "8.1 Warning messages (0x codes = W codes)")]),
 ]
 
 # Procedure docs (rendered as collapsible md docs in Fix > Procedures)
@@ -203,6 +210,7 @@ MANUAL_DBS = [
     ("1800",   "DR-ID 1800",                         "D-evo",   "d105e499-5b09-4504-a127-b7911eafd2d0"),
     ("330cl",  "DR-ID 330CL console",                "Console", "0504aa27-9563-4701-a58d-9baf5cd845c2"),
     ("300cl",  "DR-ID 300CL console",                "Console", "375723ba-0e4b-4791-8473-1ce522e7ca53"),
+    ("smart",  "FDR Smart FGX-US",                   "FDR Smart", "2b4c76ac-b1f8-41eb-98ad-4ecfa6c22791"),   # v5.15
 ]
 # Shared schema across these DBs (verified on Go PLUS + 1800): Section (title),
 # Section No (text), Chapter (select), Purpose (select: Diagnose/Procedure/
@@ -214,6 +222,34 @@ MANUAL_CODES_SPLIT_RE = re.compile(r"[,;/\s]+")
 # "Error A10", "11112 Error" — a section-type row that merely LISTS codes
 # ("4.1.2 Failure error message list") does not match this.
 MANUAL_CODE_TITLE_RE = re.compile(r"^\s*(?:error\s+\S+|\S+\s+error)\s*$", re.I)
+# v5.15: "Error E56 — BATTERY EMPTY ERROR" / "Warning 0x72 — Minimum mA".
+# Opt-in per manual: DR-ID 1800 / 1200 / 300CL also use dash titles (+107 /
+# +101 / +1,353 cards) — switching them on is R's call (bundle size, build time).
+# The code token must contain a digit, so "Error messages \u2014 Overview" is not a card.
+MANUAL_CODE_DASH_TITLE_RE = re.compile(r"^\s*(?:error|warning)\s+(?=\S*\d)\S+\s+[\u2014\u2013-]\s+\S.*$", re.I)
+MANUAL_DASH_TITLE_KEYS = {"smart"}
+# FDR Smart warnings: manual "0x72" == team shorthand "W72". Both spellings go
+# into the codes list so a CM code or a search for either finds the card.
+SMART_WARN_RE = re.compile(r"^0X(\d{2})$")
+
+def manual_code_aliases(key, codes):
+    if key != "smart":
+        return codes
+    out = list(codes)
+    for c in codes:
+        m = SMART_WARN_RE.match(c)
+        if m and ("W" + m.group(1)) not in out:
+            out.append("W" + m.group(1))
+    return out
+
+def is_manual_code_card(key, section):
+    t = str(section or "")
+    # Dash-title manuals use ONLY the dash rule: the old rule would also take
+    # list pages such as Smart's "ERROR MESSAGES" / "ERROR LOG" ("error \S+")
+    # and they could shadow the real per-code card in the app's code lookup.
+    if key in MANUAL_DASH_TITLE_KEYS:
+        return bool(MANUAL_CODE_DASH_TITLE_RE.match(t))
+    return bool(MANUAL_CODE_TITLE_RE.match(t))
 MCODES_SIZE_GUARD = 1_500_000   # chars, see build_manuals()
 
 def build_manuals():
@@ -236,12 +272,13 @@ def build_manuals():
             purpose = prop(p, "Purpose")
             codes_raw = prop(p, "Error Codes")
             codes = [c.strip().upper() for c in MANUAL_CODES_SPLIT_RE.split(str(codes_raw or "")) if c.strip()]
+            codes = manual_code_aliases(key, codes)
             loaded = bool(prop(p, "Content Loaded"))
             mref.append({"m": key, "no": secno, "t": section, "ch": prop(p, "Chapter"),
                          "p": purpose, "codes": codes, "fig": bool(prop(p, "Has Figures")),
                          "ok": loaded, "url": r.get("url", "")})
             rcount += 1
-            if purpose == "Diagnose" and codes and loaded and MANUAL_CODE_TITLE_RE.match(str(section or "")):
+            if purpose == "Diagnose" and codes and loaded and is_manual_code_card(key, section):
                 try:
                     body = render_blocks(block_children(r["id"]))
                 except SystemExit as e:
@@ -1048,9 +1085,12 @@ def build_errors():
     """
     print("Pulling error-code tables ...")
     out = []
-    for eid, name, note, page_id in ERROR_PAGES:
+    for eid, name, note, page_ref in ERROR_PAGES:
         groups = []
         state = {"title": name, "lead": ""}
+        # v5.15: page_ref is one page id, or a list of (page id, group title)
+        pages = page_ref if isinstance(page_ref, list) else [(page_ref, name)]
+        page_id = ", ".join(pid for pid, _ in pages)   # for the FATAL message below
 
         def walk(bid, depth=0):
             if depth > 8:                        # cycle / runaway guard
@@ -1083,7 +1123,16 @@ def build_errors():
                 elif t not in _ERR_SKIP and b.get("has_children"):
                     walk(b["id"], depth + 1)
 
-        walk(page_id)
+        for pid, ptitle in pages:
+            state["title"], state["lead"] = ptitle, ""
+            before = len(groups)
+            walk(pid)
+            # v5.15: with several pages per chip, check EACH page — one healthy
+            # page must not hide another that silently lost its table.
+            if len(pages) > 1 and len(groups) == before:
+                sys.exit(f"FATAL: error page '{eid}' part '{ptitle}' ({pid}) yielded no tables. "
+                         f"The page structure changed — fix build_errors() before "
+                         f"publishing a bundle with a partly empty error index.")
         n = sum(len(g["rows"]) for g in groups)
         out.append({"id": eid, "name": name, "note": note, "groups": groups})
         print(f"  {eid}: {n} codes in {len(groups)} groups")
