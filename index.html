@@ -304,7 +304,7 @@ async function unlock(){
   boot();
 }
 async function tryRemembered(){const pw=localStorage.getItem('fw_pw');if(!pw)return;$('pw').value=pw;$('uname').value=localStorage.getItem('fw_user')||'';$('rem').checked=true;await unlock();}
-const APP_VER='v5.14';
+const APP_VER='v5.15';
 // --- HA cluster names -------------------------------------------------------
 // The official HA list has 6 clusters; Hong Kong East and Hong Kong West were
 // merged into Hong Kong Island. Old bundles cached on a phone may still carry
@@ -840,12 +840,20 @@ function fix(){
 // --- 1) By Symptom (symptom index + Solution Cards + guides + manual + past cases) ---
 // Manual-DB key -> display label (mirrors build/pull_notion.py MANUAL_DBS; the
 // bundle itself carries only the key, to keep mref/mcodes rows small).
-const MANUAL_LABELS={nano:'FDR nano (DR-XD1000)','1200':'DR-ID 1200',goplus:'FDR Go PLUS','1800':'DR-ID 1800','330cl':'DR-ID 330CL console','300cl':'DR-ID 300CL console'};
+const MANUAL_LABELS={nano:'FDR nano (DR-XD1000)','1200':'DR-ID 1200',goplus:'FDR Go PLUS','1800':'DR-ID 1800','330cl':'DR-ID 330CL console','300cl':'DR-ID 300CL console',smart:'FDR Smart FGX-US'};
 const manualLabel=k=>MANUAL_LABELS[k]||k;
 // Manual-DB key -> machine family (chip name), for restricting related-manual lookups to the selected chip.
-const MANUAL_FAM={nano:'Nano','1200':'D-evo',goplus:'Go Plus','1800':'D-evo','330cl':'Console/PC','300cl':'Console/PC'};
+const MANUAL_FAM={nano:'Nano','1200':'D-evo',goplus:'Go Plus','1800':'D-evo','330cl':'Console/PC','300cl':'Console/PC',smart:'FDR Smart'};
 // Error Codes page id (DB.errors) -> manual-DB key(s) sharing the same machine family, for the 📖 Manual card link in Fix > Error Codes.
-const ERR_TO_MANUAL={goplus:['goplus'],nano:['nano'],devo3:['1800','1200']};
+const ERR_TO_MANUAL={goplus:['goplus'],nano:['nano'],devo3:['1800','1200'],smart:['smart']};
+// v5.15 — FDR Smart warnings: the manual prints "0x72", the team writes "W72".
+// A query in one spelling also matches the other — FDR Smart table rows only (the
+// build already puts both spellings into Smart manual-card code lists).
+function codeQueryAlts(q){
+  const m=/^(?:w|0x)(\d{2})$/i.exec(String(q||'').trim());
+  return m?[q,'w'+m[1],'0x'+m[1]]:[q];
+}
+function rowHasQuery(r,alts){ const t=r.join(' ').toLowerCase(); return alts.some(a=>t.includes(a)); }
 function machMatch(s){ return symMach==='All'||(s.mach||[]).some(m=>machFam(m)===symMach); }
 // families with ≥1 CM record, in count order (drives the machine chips)
 function machFamOrder(){
@@ -966,11 +974,12 @@ function mrefRow(r){
 // ignore DB.errors entirely, so a real manual code (e.g. Go Plus 'F5F') typed
 // into the box whose placeholder invites "error code" returned nothing at all.
 function errHits(q,limit){
-  const out=[];
+  const out=[], alts=codeQueryAlts(q);
   (DB.errors||[]).forEach(m=>{
+    const qs=m.id==='smart'?alts:[q];
     (m.groups||[]).forEach(g=>{
       (g.rows||[]).forEach(r=>{
-        if(r.join(' ').toLowerCase().includes(q))out.push({m,g,r});
+        if(rowHasQuery(r,qs))out.push({m,g,r});
       });
     });
   });
@@ -1054,7 +1063,8 @@ function drawErrors(){
   }
   let html=`<div class="hint" style="margin:8px 0">${esc(m.name)} — ${esc(m.note)} · ${total} codes</div>`, hits=0;
   m.groups.forEach(g=>{
-    const rows=g.rows.filter(r=>!q||r.join(' ').toLowerCase().includes(q));
+    const alts=m.id==='smart'?codeQueryAlts(q):[q];
+    const rows=g.rows.filter(r=>!q||rowHasQuery(r,alts));
     if(!rows.length)return; hits+=rows.length;
     html+=`<div class="sys">${esc(g.title)}</div><div class="caltbl"><table><tr>${g.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`+
       rows.map(r=>{
@@ -1141,7 +1151,8 @@ function extractCodes(text){
   return out;
 }
 function errHitsForCode(code){
-  const exact=errHits(code.toLowerCase(),200).filter(h=>String(h.r[0]||'').trim().toUpperCase()===code);
+  const ups=codeQueryAlts(code.toLowerCase()).map(a=>a.toUpperCase());
+  const exact=errHits(code.toLowerCase(),200).filter(h=>ups.includes(String(h.r[0]||'').trim().toUpperCase()));
   return exact.length?exact:errHits(code.toLowerCase(),10);
 }
 function symToggleAllMach(){ symAllMach=!symAllMach; render(); }
